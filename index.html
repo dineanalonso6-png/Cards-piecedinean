@@ -1,2441 +1,1079 @@
 <!DOCTYPE html>
-<html lang="pt-br">
+<html lang="pt-BR">
 <head>
-<!-- Playables SDK -->
-<script>// Playables SDK v1.0.0
-// Game lifecycle bridge: rAF-based game-ready detection + event communication
-(function() {
-  'use strict';
-
-  // Idempotency: skip if already initialized (e.g., server-side injection
-  // followed by client-side inject-javascript via the Bloks webview component).
-  if (window.playablesSDK) return;
-
-  var HANDLER_NAME = 'playablesGameEventHandler';
-  var ANDROID_BRIDGE_NAME = '_MetaPlayablesBridge';
-  var RAF_FRAME_THRESHOLD = 3;
-
-  var gameReadySent = false;
-  var firstInteractionSent = false;
-  var errorSent = false;
-  var frameCount = 0;
-  var originalRAF = window.requestAnimationFrame;
-
-  // --- Transport Layer ---
-
-  function hasIOSBridge() {
-    return !!(window.webkit &&
-              window.webkit.messageHandlers &&
-              window.webkit.messageHandlers[HANDLER_NAME]);
-  }
-
-  function hasAndroidBridge() {
-    return !!(window[ANDROID_BRIDGE_NAME] &&
-              typeof window[ANDROID_BRIDGE_NAME].postEvent === 'function');
-  }
-
-  function isInIframe() {
-    return !!(window.parent && window.parent !== window);
-  }
-
-  function sendEvent(eventName, payload) {
-    var message = {
-      type: eventName,
-      payload: payload || {},
-      timestamp: Date.now()
-    };
-
-    if (hasIOSBridge()) {
-      try {
-        window.webkit.messageHandlers[HANDLER_NAME].postMessage(message);
-      } catch (e) { /* ignore */ }
-      return;
-    }
-
-    if (hasAndroidBridge()) {
-    try {
-      var p = payload || {};
-      p.__secureToken = window.__fbAndroidBridgeAuthToken || '';
-      p.timestamp = message.timestamp;
-      window[ANDROID_BRIDGE_NAME].postEvent(
-        eventName,
-        JSON.stringify(p)
-      );
-    } catch (e) { /* ignore */ }
-    return;
-  }
-
-    if (isInIframe()) {
-      try {
-        window.parent.postMessage(message, '*');
-      } catch (e) { /* ignore */ }
-      return;
-    }
-  }
-
-  // --- rAF Game-Ready Detection ---
-
-  function onFrame() {
-    if (gameReadySent) return;
-
-    frameCount++;
-    if (frameCount >= RAF_FRAME_THRESHOLD) {
-      gameReadySent = true;
-      sendEvent('game_ready', {
-        frame_count: frameCount,
-        detected_at: Date.now()
-      });
-      return;
-    }
-
-    originalRAF.call(window, onFrame);
-  }
-
-  if (originalRAF) {
-    window.requestAnimationFrame = function(callback) {
-      if (!gameReadySent) {
-        return originalRAF.call(window, function(timestamp) {
-          frameCount++;
-          if (frameCount >= RAF_FRAME_THRESHOLD && !gameReadySent) {
-            gameReadySent = true;
-            sendEvent('game_ready', {
-              frame_count: frameCount,
-              detected_at: Date.now()
-            });
-          }
-          callback(timestamp);
-        });
-      }
-      return originalRAF.call(window, callback);
-    };
-  }
-
-  // --- First User Interaction Detection ---
-
-  function setupFirstInteractionDetection() {
-    var events = ['touchstart', 'mousedown', 'keydown'];
-
-    function onFirstInteraction() {
-      if (firstInteractionSent) return;
-      firstInteractionSent = true;
-      sendEvent('user_interaction_start', null);
-
-      for (var i = 0; i < events.length; i++) {
-        document.removeEventListener(events[i], onFirstInteraction, true);
-      }
-    }
-
-    for (var i = 0; i < events.length; i++) {
-      document.addEventListener(events[i], onFirstInteraction, true);
-    }
-  }
-
-  if (document.readyState === 'loading') {
-    document.addEventListener('DOMContentLoaded', setupFirstInteractionDetection);
-  } else {
-    setupFirstInteractionDetection();
-  }
-
-  // --- Auto Error Capture ---
-
-  window.addEventListener('error', function(event) {
-    if (errorSent) return;
-    errorSent = true;
-    sendEvent('error', {
-      message: event.message || 'Unknown error',
-      source: event.filename || '',
-      lineno: event.lineno || 0,
-      colno: event.colno || 0,
-      auto_captured: true
-    });
-  });
-
-  window.addEventListener('unhandledrejection', function(event) {
-    if (errorSent) return;
-    errorSent = true;
-    var reason = event.reason;
-    sendEvent('error', {
-      message: (reason instanceof Error) ? reason.message : String(reason),
-      type: 'unhandled_promise_rejection',
-      auto_captured: true
-    });
-  });
-
-  // --- Public API ---
-
-  window.playablesSDK = {
-    complete: function(score) {
-      sendEvent('game_ended', {
-        score: score,
-        completed: true
-      });
-    },
-
-    error: function(message) {
-      if (errorSent) return;
-      errorSent = true;
-      sendEvent('error', {
-        message: message || 'Unknown error',
-        auto_captured: false
-      });
-    },
-
-    sendEvent: function(eventName, payload) {
-      if (!eventName || typeof eventName !== 'string') return;
-      sendEvent(eventName, payload);
-    }
-  };
-
-  // Kick off rAF detection in case no game code calls rAF immediately
-  if (originalRAF) {
-    originalRAF.call(window, onFrame);
-  }
-})();</script>
-<script>window.Intl=window.Intl||{};Intl.t=function(s){return(Intl._locale&&Intl._locale[s])||s;};</script>
-<script type="module">
-  import { initializeApp } from 'https://www.gstatic.com/firebasejs/10.7.1/firebase-app.js';
-  import { getDatabase, ref, set, get, onValue, update, remove, onDisconnect } from 'https://www.gstatic.com/firebasejs/10.7.1/firebase-database.js';
-
-  const firebaseConfig = {
-    apiKey: "AIzaSyDpYaMyRYgPfCafGR_GTAdQwFezNvzdKng",
-    authDomain: "cards-piece-multiplayer.firebaseapp.com",
-    databaseURL: "https://cards-piece-multiplayer-default-rtdb.firebaseio.com",
-    projectId: "cards-piece-multiplayer",
-    storageBucket: "cards-piece-multiplayer.firebasestorage.app",
-    messagingSenderId: "181953818119",
-    appId: "1:181953818119:web:d9638c7218089f035504a2"
-  };
-
-  try {
-    const app = initializeApp(firebaseConfig);
-    window.firebaseDB = getDatabase(app);
-    window.firebaseRef = ref;
-    window.firebaseSet = set;
-    window.firebaseGet = get;
-    window.firebaseOnValue = onValue;
-    window.firebaseUpdate = update;
-    window.firebaseRemove = remove;
-    window.firebaseOnDisconnect = onDisconnect;
-    window.firebaseReady = true;
-    console.log('🔥 Firebase conectado!');
-  } catch(e) {
-    console.warn('Firebase offline:', e);
-    window.firebaseReady = false;
-  }
-</script>
 <meta charset="UTF-8">
-<meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
-<title>Cards Piece - God Edition</title>
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Ranking de Brawlers</title>
+
 <style>
-/* --- TELA DE CARREGAMENTO (CSS) --- */
-    #loadingScreen {
-        position: fixed;
-        top: 0;
-        left: 0;
-        width: 100%;
-        height: 100%;
-        background: #0f2027;
-        display: flex;
-        justify-content: center;
-        align-items: center;
-        z-index: 9999;
-        transition: opacity 0.8s ease, visibility 0.8s;
-    }
-    .loader-content { text-align: center; }
-    .spinner {
-        width: 80px;
-        height: 80px;
-        border: 8px solid rgba(255, 215, 0, 0.1);
-        border-left-color: gold;
-        border-radius: 50%;
-        margin: 0 auto 20px;
-        animation: spin 1s linear infinite;
-    }
-    #loadingScreen h2 {
-        color: gold;
-        letter-spacing: 5px;
-        margin: 10px 0;
-        font-size: 24px;
-        text-shadow: 0 0 10px rgba(255, 215, 0, 0.5);
-    }
-    #loadingScreen p { color: #888; font-style: italic; }
-    @keyframes spin { to { transform: rotate(360deg); } }
-    .loader-hidden { opacity: 0; visibility: hidden; }
+*{
+    box-sizing:border-box;
+    -webkit-tap-highlight-color:transparent;
+}
 
-    html {
-        font-size: 100%;
-    }
-    
-    body{
-        font-family:Arial, sans-serif;
-        text-align:center;
-        color:#fff;
-        margin:0;
-        background: url('https://images.unsplash.com/photo-1507525428034-b723cf961d3e?ixlib=rb-4.0.3&auto=format&fit=crop&w=1920&q=80') no-repeat center center fixed;
-        background-size: cover;
-        min-height: 100vh; 
-        overflow-x: hidden;
-        padding-bottom: 250px; 
-        /* IMPEDE O ZOOM AO CLICAR DUAS VEZES */
-        touch-action: manipulation;
-    }
+body{
+    margin:0;
+    background:#080c16;
+    color:white;
+    font-family:Arial,sans-serif;
+}
 
-    #controls {
-        position: fixed;
-        bottom: 0;
-        left: 0;
-        width: 100%;
-        background: rgba(15, 32, 39, 0.9); 
-        border-top: 2px solid gold;
-        padding: 15px 0;
-        z-index: 1000;
-        box-shadow: 0 -5px 15px rgba(0,0,0,0.5);
-    }
+header{
+    position:sticky;
+    top:0;
+    z-index:10;
+    background:#0d1424;
+    padding:15px 10px;
+    text-align:center;
+    border-bottom:1px solid #263451;
+}
 
-    button{padding:10px;margin:5px;border-radius:8px;border:none;cursor:pointer; font-weight: bold; transition: 0.2s;}
-    button:active{transform: scale(0.95);}
-    .primary{background:gold; color: #000;}
-    .nav-btn{background: #444; color: white; padding: 12px 25px; font-size: 16px;}
-    .nav-btn.active{background: #27ae60;}
-    #btnMultiplayer{padding:12px 22px !important;font-size:15px !important;transform:none !important;background:linear-gradient(45deg,#c0392b,#e74c3c) !important;color:white !important;border:2px solid #ff6b6b !important;box-shadow:0 0 15px rgba(231,76,60,0.5) !important;}
-    #btnMultiplayer:hover{box-shadow:0 0 25px rgba(231,76,60,0.8) !important;transform:scale(1.05) !important;}
-    
-    .auto-btn { background: #e67e22; color: white; border: 2px solid #d35400; }
-    @keyframes pulse-green { 0% {box-shadow: 0 0 0 0 rgba(46, 204, 113, 0.7);} 70% {box-shadow: 0 0 0 15px rgba(46, 204, 113, 0);} 100% {box-shadow: 0 0 0 0 rgba(46, 204, 113, 0);} }
+h1{
+    margin:0;
+    font-size:22px;
+}
 
-    #startScreen {
-        position: fixed; top: 0; left: 0; width: 100%; height: 100%;
-        background: rgba(0, 0, 0, 0.6); 
-        backdrop-filter: blur(5px);
-        display: flex; flex-direction: column;
-        justify-content: center; align-items: center;
-        z-index: 2000; transition: opacity 0.5s ease;
-    }
-    #startScreen h1 {
-        position: absolute; top: 10%; font-size: 60px; color: gold;
-        text-shadow: 0 0 20px rgba(255,215,0,0.7); margin: 0;
-    }
-    #startScreen .play-btn {
-        padding: 20px 60px; font-size: 24px;
-        background: #27ae60; color: white;
-        border-radius: 50px; border: 2px solid #fff;
-        transition: 0.3s; cursor: pointer;
-    }
-    #startScreen .play-btn:hover { transform: scale(1.1); background: #2ecc71; }
-    #startScreen .credits { position: absolute; bottom: 20px; right: 20px; font-size: 14px; opacity: 0.7; }
+.sub{
+    color:#8995ad;
+    font-size:12px;
+    margin-top:5px;
+}
 
-    #mythicOverlay, #godOverlay {
-        position: fixed; top: 0; left: 0; width: 100%; height: 100%;
-        background: rgba(0,0,0,0.85); display: none;
-        justify-content: center; align-items: center; z-index: 5000;
-        cursor: pointer;
-    }
-    #mythicOverlay h1 { font-size: 80px; color: red; text-shadow: 0 0 20px red; animation: pulse 1s infinite; }
-    #godOverlay h1 { font-size: 90px; color: #00ffff; text-shadow: 0 0 30px #00ffff; animation: pulse 0.8s infinite; }
-    
-    @keyframes pulse { 0% {transform: scale(1);} 50% {transform: scale(1.1);} 100% {transform: scale(1);} }
+.tabs{
+    display:flex;
+    gap:8px;
+    margin-top:12px;
+}
 
-    #moneyDisplay { 
-        font-size: 48px; 
-        font-weight: bold; 
-        color: rgba(255, 215, 0, 0.9); 
-        text-shadow: 2px 2px 10px rgba(0,0,0,0.5); 
-        background: rgba(0,0,0,0.7); 
-        display: inline-block; 
-        padding: 10px 40px; 
-        border-radius: 20px;
-        z-index: 4000; 
-        pointer-events: none;
-        transition: transform 0.2s, box-shadow 0.3s;
-        border: 2px solid gold;
-        position: sticky;
-        top: 10px; 
-        margin: 10px 0;
-    }
-    
-    .boost-active { border-color: #ff4757 !important; color: #ff4757 !important; text-shadow: 0 0 15px #ff4757 !important; }
+.tab{
+    flex:1;
+    padding:11px;
+    border:1px solid #34415d;
+    border-radius:12px;
+    background:#182239;
+    color:white;
+    font-weight:bold;
+}
 
-    #statsDisplay { font-size: 14px; color: #fff; margin-bottom: 5px; background: rgba(0,0,0,0.4); display: inline-block; padding: 5px 15px; border-radius: 10px; }
+.tab.active{
+    background:#ffd43b;
+    color:#111;
+}
 
-    .cards, .inventory-group, .index-group {
-        display: flex; flex-wrap: wrap; justify-content: center;
-        gap: 12px; margin: 15px auto; max-width: 700px;
-    }
+.toolbar{
+    display:flex;
+    gap:8px;
+    padding:10px;
+    flex-wrap:wrap;
+}
 
-    .card{width:120px; height:170px; perspective:800px; position:relative; font-size: 14px; box-sizing: border-box;}
-    .inner{ width:100%; height:100%; transform-style:preserve-3d; transition:transform 0.7s; position:relative; }
-    .card.flip .inner{transform:rotateY(180deg);}
-    
-    .front,.back{ 
-        position:absolute; width:100%; height:100%; backface-visibility:hidden; 
-        border-radius:10px; display:flex; flex-direction:column; justify-content:center; 
-        align-items:center; 
-        background-color: #a67c52;
-        background-image: repeating-linear-gradient(45deg, rgba(255,255,255, 0.05) 0px, rgba(255,255,255, 0.05) 2px,transparent 2px, transparent 4px), linear-gradient(to bottom, rgba(0,0,0,0) 0%, rgba(0,0,0,0.3) 100%);
-        padding: 8px; box-sizing: border-box; 
-        box-shadow: inset 0 0 15px rgba(0,0,0,0.5);
-    }
-    
-    .back h3 { font-size: 14px; margin: 6px 0; color: #fff; text-shadow: 1px 1px 2px #000; }
-    .back p { font-size: 12px; margin: 3px 0; color: #fff; text-shadow: 1px 1px 2px #000; }
-    .front { background: #333; color: gold; font-size: 40px; border: 3px solid gold;}
+input{
+    flex:1;
+    min-width:180px;
+    padding:11px;
+    border-radius:10px;
+    border:1px solid #34415d;
+    background:#101827;
+    color:white;
+}
 
-    .back{transform:rotateY(180deg);}
+button{
+    cursor:pointer;
+}
 
-    .common{border:3px solid gray;}
-    .uncommon{border:3px solid #2ecc71;}
-    .rare{border:3px solid blue;}
-    .epic{border:3px solid purple;}
-    .legendary{border:3px solid gold;}
-    .mythic{border:3px solid red;}
-    .god{border:3.5px solid #00ffff; box-shadow: 0 0 15px #00ffff; background-color: #001a1a !important;}
+.action{
+    background:#182239;
+    color:white;
+    border:1px solid #34415d;
+    border-radius:10px;
+    padding:10px;
+    font-weight:bold;
+}
 
-    .locked { filter: brightness(0.2); opacity: 0.5; border: 2px dashed #444; }
-    
-    .index-card { 
-        width: 100px; height: 140px; font-size: 12px; border-radius: 10px; 
-        display: flex; flex-direction: column; align-items: center; justify-content: center; text-align: center;
-        background-color: #a67c52;
-        padding: 8px; box-sizing: border-box; transition: 0.3s;
-        position: relative;
-    }
+.status{
+    padding:0 10px 10px;
+    color:#9ba6bb;
+    font-size:12px;
+}
 
-    .page { display: none; padding: 20px; position: relative; }
-    .page.active { display: block; }
+.status b{
+    color:#4de184;
+}
 
-    #btnReset { background: #e74c3c; color: white; padding: 10px 20px; }
+.page{
+    display:none;
+    padding:0 10px 30px;
+}
 
-    .legendary-glow{ animation:legendaryPulse 1.2s ease; box-shadow:0 0 15px gold; }
-    @keyframes legendaryPulse{ 0%{transform:scale(0.8);filter:brightness(2);} 50%{transform:scale(1.2);filter:brightness(3);} 100%{transform:scale(1);} }
-    
-    .mythic-glow{ animation:mythicExplosion 1.2s ease; }
-    @keyframes mythicExplosion{ 0%{transform:scale(0.3);filter:brightness(5);} 50%{transform:scale(1.3);filter:brightness(4);} 100%{transform:scale(1);} }
+.page.active{
+    display:block;
+}
 
-    .god-glow{ animation:godExplosion 1.5s ease; box-shadow: 0 0 30px #00ffff; }
-    @keyframes godExplosion{ 0%{transform:scale(0.2); filter:hue-rotate(0deg) brightness(5);} 50%{transform:scale(1.4); filter:hue-rotate(180deg) brightness(4);} 100%{transform:scale(1);} }
+.pool{
+    border:1px dashed #405071;
+    border-radius:15px;
+    padding:12px;
+    margin-bottom:12px;
+}
 
-    .sold {
-        opacity: 0.9; background: #222 !important; border-radius: 10px;
-        box-shadow: inset 0 0 20px rgba(0,0,0,0.8);
-    }
-    .sold::after {
-        content: attr(data-name) "\A\A" attr(data-rarity) "\A\A Vendido por " attr(data-price);
-        position:absolute; top:50%; left:50%; transform:translate(-50%,-50%);
-        font-size:12px; font-weight:bold; text-align:center; white-space:pre-line;
-        text-shadow: 0 0 5px #000; z-index: 2; width: 90%;
-    }
+.poolTitle{
+    font-weight:bold;
+    margin-bottom:9px;
+}
 
-    h1, h3, h4, p {
-        text-shadow: 2px 2px 4px rgba(0,0,0,0.8);
-    }
+.poolCards{
+    display:flex;
+    flex-wrap:wrap;
+    gap:6px;
+}
 
-    /* Modal Config */
-    #settingsModal {
-        display: none;
-        position: fixed;
-        top: 50%;
-        left: 50%;
-        transform: translate(-50%, -50%);
-        background: rgba(15, 32, 39, 0.95);
-        padding: 30px;
-        border-radius: 15px;
-        border: 2px solid gold;
-        z-index: 6000;
-        box-shadow: 0 0 30px rgba(0,0,0,0.8);
-        min-width: 280px;
-    }
+.grid{
+    display:grid;
+    grid-template-columns:repeat(2,1fr);
+    gap:8px;
+}
 
-    /* Estilo do Slider de Volume */
-    .volume-container {
-        margin: 15px 0;
-        text-align: left;
-    }
-    .volume-container label {
-        display: block;
-        margin-bottom: 5px;
-        color: gold;
-        font-size: 14px;
-    }
-    #volumeControl {
-        width: 100%;
-        cursor: pointer;
-        accent-color: gold;
-    }
+.bucket{
+    background:#111a2d;
+    border:1px solid #293957;
+    border-radius:14px;
+    min-height:170px;
+    padding:9px;
+}
 
-    
-    /* === MULTIPLAYER BATALHA COMPLETA === */
-    #multiplayerScreen {
-        display: none; position: fixed; top: 0; left: 0; width: 100%; height: 100%;
-        background: linear-gradient(135deg, #0a0e27 0%, #1a1f3a 100%);
-        z-index: 4000; overflow-y: auto; padding: 20px; box-sizing: border-box;
-    }
+.bucket.over{
+    border-color:#ffd43b;
+}
 
-    /* ── BATTLE BACKGROUND ── */
-    #battleScreen {
-        position: relative;
-        border-radius: 16px;
-        overflow: hidden;
-    }
-    #battleBg {
-        position: absolute; inset: 0; z-index: 0; pointer-events: none;
-        background:
-            radial-gradient(ellipse 80% 40% at 50% 0%, rgba(231,76,60,0.18) 0%, transparent 70%),
-            radial-gradient(ellipse 80% 40% at 50% 100%, rgba(52,152,219,0.18) 0%, transparent 70%),
-            linear-gradient(180deg, #0d0d1a 0%, #12102a 40%, #0d1a12 60%, #0d0d1a 100%);
-        border-radius: 16px;
-    }
-    #battleBg::before {
-        content: '';
-        position: absolute; inset: 0;
-        background: url("data:image/svg+xml,%3Csvg width='60' height='60' viewBox='0 0 60 60' xmlns='http://www.w3.org/2000/svg'%3E%3Cg fill='none' fill-rule='evenodd'%3E%3Cg fill='%23ffffff' fill-opacity='0.025'%3E%3Cpath d='M36 34v-4h-2v4h-4v2h4v4h2v-4h4v-2h-4zm0-30V0h-2v4h-4v2h4v4h2V6h4V4h-4zM6 34v-4H4v4H0v2h4v4h2v-4h4v-2H6zM6 4V0H4v4H0v2h4v4h2V6h4V4H6z'/%3E%3C/g%3E%3C/g%3E%3C/svg%3E");
-        opacity: 0.4;
-    }
-    #battleDivider {
-        position: absolute; left: 0; right: 0; top: 50%;
-        transform: translateY(-50%);
-        height: 3px;
-        background: linear-gradient(90deg, transparent, rgba(255,215,0,0.15), rgba(255,215,0,0.5), rgba(255,215,0,0.15), transparent);
-        pointer-events: none; z-index: 1;
-        box-shadow: 0 0 20px rgba(255,215,0,0.3);
-    }
-    /* floating particles */
-    .battle-particle {
-        position: absolute; border-radius: 50%; pointer-events: none;
-        animation: floatParticle linear infinite;
-        opacity: 0.4; z-index: 1;
-    }
-    @keyframes floatParticle {
-        0%   { transform: translateY(0) scale(1); opacity: 0.4; }
-        50%  { opacity: 0.15; }
-        100% { transform: translateY(-120px) scale(0.3); opacity: 0; }
-    }
-    /* Make all battle content sit above bg */
-    #battleScreen > *:not(#battleBg):not(#battleDivider):not(.battle-particle) {
-        position: relative; z-index: 2;
-    }
+.bucketHeader{
+    display:flex;
+    justify-content:space-between;
+    align-items:center;
+    margin-bottom:8px;
+}
 
-    .mp-container { max-width: 1200px; margin: 0 auto; }
-    .mp-header { text-align: center; margin-bottom: 30px; }
-    .mp-header h1 { color: gold; font-size: 32px; text-shadow: 0 0 20px gold; margin: 10px 0; }
-    .mp-menu { display: grid; grid-template-columns: repeat(auto-fit, minmax(280px, 1fr)); gap: 20px; margin-bottom: 30px; }
-    .mp-card {
-        background: rgba(0,0,0,0.8); border: 2px solid #444; border-radius: 15px;
-        padding: 25px; text-align: center; cursor: pointer; transition: all 0.3s;
-    }
-    .mp-card:hover { border-color: gold; transform: translateY(-5px); box-shadow: 0 10px 30px rgba(255,215,0,0.3); }
-    .mp-card h3 { color: gold; margin-bottom: 10px; }
-    .mp-card p { color: #aaa; font-size: 14px; }
-    
-    #lobbyScreen, #battleScreen { display: none; }
-    .lobby-info { background: rgba(0,0,0,0.8); padding: 20px; border-radius: 15px; border: 2px solid gold; margin-bottom: 20px; text-align: center; }
-    .room-code { font-size: 48px; color: gold; font-weight: bold; letter-spacing: 5px; margin: 15px 0; text-shadow: 0 0 20px gold; }
-    .players-list { display: flex; justify-content: space-around; gap: 20px; margin: 20px 0; }
-    .player-slot { flex: 1; background: rgba(255,255,255,0.05); padding: 20px; border-radius: 10px; border: 2px solid #444; }
-    .player-slot.ready { border-color: #27ae60; background: rgba(39,174,96,0.1); }
-    .player-slot.host { border-color: gold; }
-    
-    /* Batalha */
-    .battle-hud { display: grid; grid-template-columns: 1fr auto 1fr; gap: 20px; align-items: center; margin-bottom: 20px; }
-    .battle-player { background: rgba(0,0,0,0.75); backdrop-filter: blur(6px); padding: 15px; border-radius: 12px; border: 2px solid rgba(255,255,255,0.1); box-shadow: 0 4px 20px rgba(0,0,0,0.5); }
-    .battle-player.active { border-color: gold; box-shadow: 0 0 25px rgba(255,215,0,0.4); }
-    .hp-bar { width: 100%; height: 25px; background: #333; border-radius: 12px; overflow: hidden; margin: 8px 0; border: 1px solid #555; }
-    .hp-fill { height: 100%; background: linear-gradient(90deg, #e74c3c, #c0392b); transition: width 0.5s; display: flex; align-items: center; justify-content: center; color: white; font-weight: bold; font-size: 12px; }
-    .energy-bar { display: flex; gap: 5px; margin-top: 5px; }
-    .energy-orb { width: 22px; height: 22px; border-radius: 50%; background: #333; border: 2px solid #555; }
-    .energy-orb.filled { background: radial-gradient(circle, #3498db, #2980b9); border-color: #5dade2; box-shadow: 0 0 10px #3498db; }
-    
-    .battle-field { display: grid; grid-template-columns: 1fr 1fr; gap: 20px; margin: 20px 0; }
-    .field-side {
-        background: rgba(0,0,0,0.45);
-        backdrop-filter: blur(4px);
-        border: 2px dashed rgba(255,255,255,0.12);
-        border-radius: 14px; min-height: 180px; padding: 15px;
-        box-shadow: inset 0 0 30px rgba(0,0,0,0.3);
-        transition: border-color 0.3s;
-    }
-    .field-side:first-child { border-color: rgba(231,76,60,0.35); box-shadow: inset 0 0 30px rgba(231,76,60,0.05); }
-    .field-side:last-child  { border-color: rgba(52,152,219,0.35); box-shadow: inset 0 0 30px rgba(52,152,219,0.05); }
-    .field-side h4 { color: #aaa; text-align: center; margin-bottom: 10px; letter-spacing: 1px; text-transform: uppercase; font-size: 11px; }
-    .field-cards { display: flex; gap: 10px; flex-wrap: wrap; justify-content: center; }
-    
-    .battle-hand { background: rgba(0,0,0,0.7); backdrop-filter: blur(6px); padding: 15px; border-radius: 12px; border: 2px solid rgba(255,215,0,0.2); margin-top: 20px; box-shadow: 0 -4px 20px rgba(0,0,0,0.4); }
-    .hand-cards { display: flex; gap: 10px; overflow-x: auto; padding: 10px 0; justify-content: center; }
-    .battle-card {
-        min-width: 110px; height: 150px; background: linear-gradient(145deg, #2c3e50, #1a1a2e);
-        border: 2px solid #555; border-radius: 8px; padding: 8px; cursor: pointer;
-        transition: all 0.3s; position: relative; flex-shrink: 0;
-    }
-    .battle-card:hover { transform: translateY(-10px); border-color: gold; }
-    .battle-card.disabled { opacity: 0.4; cursor: not-allowed; filter: grayscale(1); }
-    .battle-card .card-cost { position: absolute; top: 5px; left: 5px; background: #3498db; color: white; width: 22px; height: 22px; border-radius: 50%; display: flex; align-items: center; justify-content: center; font-weight: bold; font-size: 12px; }
-    .battle-card .card-atk { position: absolute; bottom: 5px; left: 5px; background: #e74c3c; color: white; padding: 2px 6px; border-radius: 4px; font-weight: bold; font-size: 11px; }
-    .battle-card .card-name { font-size: 10px; color: white; text-align: center; margin-top: 25px; font-weight: bold; }
-    .battle-card .card-rarity { font-size: 9px; text-align: center; margin-top: 5px; }
-    
-    .battle-controls { display: flex; gap: 15px; justify-content: center; margin-top: 20px; }
-    .btn-battle { padding: 12px 25px; font-size: 16px; border: none; border-radius: 8px; cursor: pointer; font-weight: bold; transition: all 0.3s; }
-    .btn-end-turn { background: linear-gradient(45deg, #f39c12, #e67e22); color: white; box-shadow: 0 4px 15px rgba(243,156,18,0.4); }
-    .btn-end-turn:hover { transform: scale(1.05); box-shadow: 0 0 25px #f39c12; }
-    .btn-surrender { background: rgba(80,80,80,0.8); color: #ccc; border: 1px solid #666; }
-    .btn-surrender:hover { background: #c0392b; color: white; }
-    
-    .battle-log { background: rgba(0,0,0,0.65); backdrop-filter: blur(4px); padding: 12px 15px; border-radius: 10px; border: 1px solid rgba(255,255,255,0.08); max-height: 130px; overflow-y: auto; margin-top: 15px; font-size: 13px; }
-    .log-entry { margin: 3px 0; color: #aaa; }
-    .log-entry.damage { color: #e74c3c; font-weight: bold; }
-    .log-entry.heal { color: #27ae60; }
-    .log-entry.turn { color: gold; }
-    
-    #chatBox { position: fixed; bottom: 75px; right: 20px; width: 280px; background: rgba(0,0,0,0.95); border: 2px solid #444; border-radius: 10px; z-index: 5000; display: none; box-shadow: 0 5px 30px rgba(0,0,0,0.7); }
-    #chatBox.chat-open { display: block !important; }
-    #chatBoxHeader { background: rgba(255,215,0,0.15); border-bottom: 1px solid #444; padding: 8px 12px; display: flex; justify-content: space-between; align-items: center; border-radius: 8px 8px 0 0; }
-    #chatBoxHeader span { color: gold; font-weight: bold; font-size: 13px; }
-    #chatBoxHeader button { background: none; border: none; color: #aaa; cursor: pointer; font-size: 16px; padding: 0; margin: 0; }
-    #chatMessages { height: 150px; overflow-y: auto; padding: 10px; font-size: 12px; }
-    #chatInput { width: 100%; padding: 8px; background: #222; border: none; border-top: 1px solid #444; color: white; border-radius: 0 0 8px 8px; box-sizing: border-box; }
-    #chatToggleBtn {
-        position: fixed; bottom: 20px; right: 20px; width: 52px; height: 52px;
-        background: linear-gradient(135deg, #f39c12, #e67e22); border: none; border-radius: 50%;
-        color: white; font-size: 24px; cursor: pointer; z-index: 5001;
-        box-shadow: 0 4px 15px rgba(243,156,18,0.5); display: none;
-        align-items: center; justify-content: center; transition: transform 0.2s;
-    }
-    #chatToggleBtn:hover { transform: scale(1.1); }
-    #chatUnreadBadge {
-        position: absolute; top: -4px; right: -4px; background: #e74c3c;
-        color: white; font-size: 10px; font-weight: bold; width: 18px; height: 18px;
-        border-radius: 50%; display: none; align-items: center; justify-content: center;
-    }
+.trophy{
+    font-size:18px;
+    font-weight:bold;
+}
 
-    /* === DECK SELECTION MODAL === */
-    #deckSelectModal {
-        display: none; position: fixed; top: 0; left: 0; width: 100%; height: 100%;
-        background: rgba(0,0,0,0.92); z-index: 8000; overflow-y: auto;
-        justify-content: center; align-items: flex-start; padding: 20px; box-sizing: border-box;
-    }
-    #deckSelectModal.active { display: flex; }
-    .deck-select-container {
-        background: linear-gradient(135deg, #0a0e27 0%, #1a1f3a 100%);
-        border: 2px solid gold; border-radius: 20px; padding: 25px;
-        max-width: 700px; width: 100%; margin: auto;
-        box-shadow: 0 0 50px rgba(255,215,0,0.3);
-    }
-    .deck-select-container h2 { color: gold; text-align: center; margin-bottom: 5px; font-size: 24px; text-shadow: 0 0 15px gold; }
-    .deck-select-container p { color: #aaa; text-align: center; margin-bottom: 20px; font-size: 14px; }
-    #deckCardGrid { display: flex; flex-wrap: wrap; gap: 10px; justify-content: center; margin-bottom: 20px; max-height: 55vh; overflow-y: auto; padding: 10px; }
-    .deck-card-option {
-        width: 100px; padding: 10px 6px; background: rgba(255,255,255,0.05);
-        border: 2px solid #444; border-radius: 10px; cursor: pointer; text-align: center;
-        transition: all 0.2s; position: relative; font-size: 12px;
-    }
-    .deck-card-option:hover { border-color: gold; background: rgba(255,215,0,0.1); }
-    .deck-card-option.selected { border-color: #27ae60; background: rgba(39,174,96,0.2); }
-    .deck-card-option .dc-emoji { font-size: 22px; display: block; margin-bottom: 4px; }
-    .deck-card-option .dc-name { font-size: 11px; color: white; font-weight: bold; display: block; margin-bottom: 3px; }
-    .deck-card-option .dc-rarity { font-size: 10px; display: block; }
-    .deck-card-option .dc-atk { font-size: 10px; color: #e74c3c; display: block; }
-    .deck-card-option .dc-qty { position: absolute; top: 4px; right: 6px; font-size: 10px; color: gold; font-weight: bold; }
-    .deck-select-container .deck-count { text-align: center; font-size: 16px; color: gold; font-weight: bold; margin-bottom: 15px; }
-    .deck-confirm-btn { width: 100%; padding: 14px; background: linear-gradient(45deg, #27ae60, #2ecc71); color: white; border: none; border-radius: 10px; font-size: 18px; font-weight: bold; cursor: pointer; transition: 0.3s; }
-    .deck-confirm-btn:disabled { opacity: 0.4; cursor: not-allowed; background: #555; }
-    .deck-confirm-btn:not(:disabled):hover { transform: scale(1.02); box-shadow: 0 0 20px #27ae60; }
-    .deck-cancel-btn { width: 100%; padding: 10px; background: #555; color: white; border: none; border-radius: 10px; font-size: 15px; cursor: pointer; margin-top: 8px; }
-    @keyframes deckShake { 0%,100%{transform:translateX(0)} 20%{transform:translateX(-6px)} 40%{transform:translateX(6px)} 60%{transform:translateX(-4px)} 80%{transform:translateX(4px)} }
+.count{
+    background:#080e1b;
+    padding:4px 7px;
+    border-radius:20px;
+    color:#9ca8bd;
+    font-size:11px;
+}
 
-    /* === MULTIPLAYER - TELA DE NOME === */
-    #nameScreen {
-        position: fixed; top: 0; left: 0; width: 100%; height: 100%;
-        background: linear-gradient(135deg, #0f2027 0%, #203a43 50%, #2c5364 100%);
-        display: none; justify-content: center; align-items: center;
-        z-index: 10000; flex-direction: column;
-    }
-    .name-container {
-        background: rgba(0,0,0,0.9); padding: 40px; border-radius: 20px;
-        border: 3px solid gold; box-shadow: 0 0 40px rgba(255,215,0,0.5);
-        text-align: center; max-width: 400px; width: 90%; animation: floatIn 0.8s ease;
-    }
-    @keyframes floatIn { from { transform: translateY(50px); opacity: 0; } to { transform: translateY(0); opacity: 1; } }
-    .name-container h2 { color: gold; font-size: 28px; margin-bottom: 15px; text-shadow: 0 0 15px gold; }
-    .name-container input {
-        width: 100%; padding: 15px; font-size: 18px; border: 2px solid #444;
-        border-radius: 10px; background: #1a1a1a; color: white; text-align: center;
-        margin: 15px 0; box-sizing: border-box;
-    }
-    .name-container input:focus { border-color: gold; outline: none; box-shadow: 0 0 15px rgba(255,215,0,0.3); }
-    .name-container button {
-        width: 100%; padding: 15px; font-size: 20px;
-        background: linear-gradient(45deg, #27ae60, #2ecc71);
-        color: white; border: none; border-radius: 10px; cursor: pointer;
-        font-weight: bold; margin-top: 10px;
-    }
-    .name-container button:hover { transform: scale(1.05); box-shadow: 0 0 20px #27ae60; }
-    #playerNameDisplay {
-        position: fixed; top: 70px; left: 20px; background: rgba(0,0,0,0.7);
-        padding: 8px 15px; border-radius: 20px; border: 1px solid gold;
-        color: gold; font-size: 14px; z-index: 3500; font-weight: bold; display: none;
-    }
+.drop{
+    min-height:120px;
+    display:flex;
+    flex-direction:column;
+    gap:5px;
+}
 
+.card{
+    background:linear-gradient(145deg,#293958,#172238);
+    border:1px solid #3b4d70;
+    border-radius:9px;
+    padding:9px 7px;
+    font-size:12px;
+    font-weight:bold;
+    cursor:pointer;
+    user-select:none;
+}
+
+.card.selected{
+    outline:2px solid #ffd43b;
+}
+
+.empty{
+    color:#59667e;
+    text-align:center;
+    font-size:11px;
+    padding:15px 3px;
+}
+
+.modal{
+    position:fixed;
+    inset:0;
+    background:#000b;
+    display:none;
+    align-items:flex-end;
+    z-index:50;
+}
+
+.modal.show{
+    display:flex;
+}
+
+.sheet{
+    width:100%;
+    background:#111a2d;
+    border-radius:20px 20px 0 0;
+    padding:16px;
+}
+
+.sheet h2{
+    margin:0;
+    font-size:18px;
+}
+
+.sheet p{
+    color:#8995ad;
+    font-size:12px;
+}
+
+.choices{
+    display:grid;
+    grid-template-columns:repeat(3,1fr);
+    gap:7px;
+}
+
+.choice{
+    background:#1c2942;
+    color:white;
+    border:1px solid #3a4b6b;
+    border-radius:10px;
+    padding:11px 4px;
+    font-weight:bold;
+}
+
+.cancel{
+    width:100%;
+    margin-top:10px;
+    background:#301922;
+    color:white;
+    border:1px solid #633442;
+    border-radius:10px;
+    padding:11px;
+}
+
+.toast{
+    position:fixed;
+    bottom:18px;
+    left:50%;
+    transform:translateX(-50%);
+    background:white;
+    color:#111;
+    padding:10px 15px;
+    border-radius:12px;
+    font-size:12px;
+    font-weight:bold;
+    opacity:0;
+    pointer-events:none;
+    transition:.2s;
+    z-index:100;
+}
+
+.toast.show{
+    opacity:1;
+}
+
+@media(max-width:380px){
+    .grid{
+        grid-template-columns:1fr 1fr;
+    }
+}
 </style>
 </head>
+
 <body>
 
-    
-    <!-- MULTIPLAYER SCREEN -->
-    <div id="multiplayerScreen">
-        <div class="mp-container">
-            <div class="mp-header">
-                <h1>⚔️ BATALHA MULTIPLAYER</h1>
-                <button onclick="closeMultiplayer()" style="position: absolute; top: 20px; left: 20px; background: #e74c3c; color: white; border: none; padding: 10px 20px; border-radius: 8px; cursor: pointer;">✕ Fechar</button>
-            </div>
-            
-            <div id="mpMenu">
-                <div class="mp-menu">
-                    <div class="mp-card" onclick="createRoom()">
-                        <h3>🏴‍☠️ Criar Sala</h3>
-                        <p>Crie uma sala e convide um amigo</p>
-                    </div>
-                    <div class="mp-card" onclick="showJoinRoom()">
-                        <h3>🔍 Entrar em Sala</h3>
-                        <p>Digite o código da sala</p>
-                    </div>
-                    <div class="mp-card" onclick="quickMatch()">
-                        <h3>⚡ Partida Rápida</h3>
-                        <p>Encontre oponente aleatório</p>
-                    </div>
-                </div>
-                <div id="onlineSection" style="background: rgba(0,0,0,0.8); padding: 20px; border-radius: 15px; border: 2px solid #444; margin-top: 20px;">
-                    <h3 style="color: gold; text-align: center; margin-bottom: 15px;">🌐 Jogadores Online</h3>
-                    <div id="onlinePlayersList" style="display: grid; gap: 10px; max-height: 200px; overflow-y: auto;">
-                        <p style="color:#888;text-align:center;">Carregando...</p>
-                    </div>
-                </div>
-                <div id="joinRoomForm" style="display: none; text-align: center; background: rgba(0,0,0,0.8); padding: 20px; border-radius: 10px; max-width: 400px; margin: 0 auto;">
-                    <input type="text" id="roomCodeInput" placeholder="CÓDIGO" maxlength="6" style="padding: 15px; font-size: 24px; text-align: center; letter-spacing: 5px; width: 200px; background: #1a1a1a; border: 2px solid gold; color: gold; border-radius: 8px; text-transform: uppercase;">
-                    <br><br>
-                    <button onclick="joinRoom()" class="btn-battle btn-end-turn">Entrar</button>
-                    <button onclick="hideJoinRoom()" class="btn-battle btn-surrender">Cancelar</button>
-                </div>
-            </div>
-            
-            <div id="lobbyScreen">
-                <div class="lobby-info">
-                    <p>Código da Sala:</p>
-                    <div class="room-code" id="displayRoomCode">------</div>
-                    <p style="color: #888;">Compartilhe este código com seu amigo</p>
-                </div>
-                <div class="players-list">
-                    <div class="player-slot host" id="player1Slot">
-                        <h4>👑 Host</h4>
-                        <p id="player1Name">Aguardando...</p>
-                        <p id="player1Status" style="color: #888; font-size: 12px;">Aguardando...</p>
-                    </div>
-                    <div class="player-slot" id="player2Slot">
-                        <h4>⚔️ Oponente</h4>
-                        <p id="player2Name">Aguardando...</p>
-                        <p style="color: #888; font-size: 12px;" id="player2Status">Conectando...</p>
-                    </div>
-                </div>
-                <div style="text-align: center;">
-                    <button id="readyBtn" onclick="toggleReady()" class="btn-battle btn-end-turn" disabled style="opacity: 0.5;">PRONTO</button>
-                    <button onclick="leaveRoom()" class="btn-battle btn-surrender">Sair</button>
-                </div>
-            </div>
-            
-            <div id="battleScreen">
-                <!-- Epic battle background -->
-                <div id="battleBg"></div>
-                <div id="battleDivider"></div>
-                <div class="battle-hud">
-                    <div class="battle-player" id="opponentHud">
-                        <div style="display: flex; justify-content: space-between; align-items: center;">
-                            <strong id="opponentName">Oponente</strong>
-                            <span style="color: #e74c3c;">❤️ <span id="opponentHp">30</span>/30</span>
-                        </div>
-                        <div class="hp-bar"><div class="hp-fill" id="opponentHpBar" style="width: 100%;">30</div></div>
-                        <div class="energy-bar" id="opponentEnergy"></div>
-                    </div>
-                    <div style="text-align: center;">
-                        <div style="font-size: 24px; color: gold;" id="turnIndicator">SEU TURNO</div>
-                        <div style="font-size: 12px; color: #888;">Turno <span id="turnNumber">1</span></div>
-                    </div>
-                    <div class="battle-player active" id="playerHud">
-                        <div style="display: flex; justify-content: space-between; align-items: center;">
-                            <strong id="myName">Você</strong>
-                            <span style="color: #e74c3c;">❤️ <span id="myHp">30</span>/30</span>
-                        </div>
-                        <div class="hp-bar"><div class="hp-fill" id="myHpBar" style="width: 100%;">30</div></div>
-                        <div class="energy-bar" id="myEnergy"></div>
-                    </div>
-                </div>
-                
-                <div class="battle-field">
-                    <div class="field-side">
-                        <h4>Campo do Oponente</h4>
-                        <div class="field-cards" id="opponentField"></div>
-                    </div>
-                    <div class="field-side">
-                        <h4>Seu Campo</h4>
-                        <div class="field-cards" id="myField"></div>
-                    </div>
-                </div>
-                
-                <div class="battle-hand">
-                    <h4 style="color: gold; margin-bottom: 10px;">Sua Mão (<span id="handCount">0</span> cartas)</h4>
-                    <div class="hand-cards" id="battleHand"></div>
-                </div>
-                
-                <div class="battle-controls">
-                    <button class="btn-battle btn-end-turn" id="endTurnBtn" onclick="endTurn()">Finalizar Turno</button>
-                    <button class="btn-battle btn-surrender" onclick="surrender()">Render-se</button>
-                </div>
-                
-                <div class="battle-log" id="battleLog">
-                    <div class="log-entry turn">Batalha iniciada! Boa sorte!</div>
-                </div>
-            </div>
-        </div>
-    </div>
-    
-    <div id="chatBox">
-        <div id="chatBoxHeader">
-            <span>💬 Chat da Batalha</span>
-            <button onclick="toggleChat()">✕</button>
-        </div>
-        <div id="chatMessages"></div>
-        <input type="text" id="chatInput" placeholder="Digite..." onkeypress="if(event.key==='Enter') sendChat()">
-    </div>
+<header>
 
-    <button id="chatToggleBtn" onclick="toggleChat()" title="Abrir Chat">
-        💬
-        <div id="chatUnreadBadge"></div>
-    </button>
+<h1>🏆 Ranking de Brawlers</h1>
 
-    <!-- DECK SELECTION MODAL -->
-    <div id="deckSelectModal">
-        <div class="deck-select-container">
-            <h2>⚔️ Monte seu Deck</h2>
-            <p>Selecione exatamente <strong style="color:gold">5 cartas</strong> do seu inventário para batalhar</p>
-            <div class="deck-count">Selecionadas: <span id="deckSelectedCount">0</span> / 5</div>
-            <div id="deckCardGrid"></div>
-            <button class="deck-confirm-btn" id="deckConfirmBtn" disabled onclick="confirmDeckSelection()">✅ Confirmar Deck</button>
-            <button class="deck-cancel-btn" onclick="cancelDeckSelection()">✕ Cancelar</button>
-        </div>
-    </div>
+<div class="sub">
+107 brawlers • atualizado até Cosmo
+</div>
 
-    <div id="nameScreen">
-        <div class="name-container">
-            <h2>🏴‍☠️ Bem-vindo à Grand Line!</h2>
-            <p style="color: #aaa; margin-bottom: 20px;">Escolha seu nome de pirata</p>
-            <input type="text" id="playerNameInput" placeholder="Seu nome..." maxlength="15" onkeypress="if(event.key==='Enter') savePlayerName()">
-            <button onclick="savePlayerName()">ZARPAR! ⚓</button>
-            <p style="font-size: 12px; color: #666; margin-top: 15px;">Seu nome ficará salvo</p>
-        </div>
-    </div>
+<div class="tabs">
+
+<button class="tab active" onclick="changePage('low',this)">
+100 → 1000
+</button>
+
+<button class="tab" onclick="changePage('high',this)">
+1000 → 2000
+</button>
+
+</div>
+
+</header>
+
+<div class="toolbar">
+
+<input
+id="search"
+type="search"
+placeholder="🔎 Procurar brawler..."
+oninput="render()">
+
+<button class="action" onclick="clearSearch()">
+Limpar
+</button>
+
+<button class="action" onclick="resetAll()">
+↻ Zerar
+</button>
+
+</div>
+
+<div class="status" id="status"></div>
+
+<!-- PÁGINA 100-1000 -->
+
+<div id="low" class="page active">
+
+<div class="pool">
+
+<div class="poolTitle">
+📦 Brawlers não classificados
+</div>
+
+<div id="poolLow" class="poolCards"></div>
+
+</div>
+
+<div id="gridLow" class="grid"></div>
+
+</div>
+
+<!-- PÁGINA 1000-2000 -->
+
+<div id="high" class="page">
+
+<div class="pool">
+
+<div class="poolTitle">
+📦 Brawlers não classificados
+</div>
+
+<div id="poolHigh" class="poolCards"></div>
+
+</div>
+
+<div id="gridHigh" class="grid"></div>
+
+</div>
 
 
-    <div id="loadingScreen">
-        <div class="loader-content">
-            <div class="spinner"></div>
-            <h2>CARREGANDO RECURSOS...</h2>
-            <p>Preparando os tesouros da Grand Line</p>
-        </div>
-    </div>
+<!-- MODAL -->
 
-    <div id="mythicOverlay" onclick="this.style.display='none'">
-        <h1>🔥MÍTICA🔥</h1>
-    </div>
+<div id="modal" class="modal">
 
-    <div id="godOverlay" onclick="this.style.display='none'">
-        <h1>✨DIVINDADE✨</h1>
-    </div>
+<div class="sheet">
 
-    <div id="settingsModal">
-        <h2 style="color: gold; margin-top: 0;">Configurações</h2>
-        
-        <div style="margin: 10px 0; text-align: left;">
-            <label style="font-size: 18px; cursor: pointer;">
-                <input type="checkbox" id="toggleMusic" checked onchange="toggleMusicStatus()"> 🎵 Música
-            </label>
-        </div>
+<h2 id="modalName">
+Brawler
+</h2>
 
-        <div class="volume-container">
-            <label>Volume do Áudio:</label>
-            <input type="range" id="volumeControl" min="0" max="0.5" step="0.01" value="0.15" oninput="changeVolume(this.value)">
-        </div>
+<p>
+Escolha quantos troféus você possui nesse brawler.
+</p>
 
-        <button class="primary" onclick="redeemCode()" style="width: 100%; margin-bottom: 10px; background: #3498db; color: white;">🎟️ Resgatar Código</button>
-        <button class="primary" onclick="closeSettings()" style="width: 100%; margin-bottom: 10px;">Fechar</button>
-        <button id="btnFullReset" onclick="fullResetGame()" style="width: 100%; background: #c0392b; color: white; border: none; padding: 10px; border-radius: 8px; cursor: pointer; font-weight: bold; font-size: 12px; opacity: 0.8;">⚠️ RESET TOTAL (APAGAR TUDO)</button>
-    </div>
+<div id="choices" class="choices"></div>
 
-    <div id="startScreen">
-        <h1>🏴‍☠️ Cards Piece</h1>
-        <button class="play-btn" onclick="startGame()">JOGAR</button>
-        <div class="credits">Dinean J.A.Alonso</div>
-    </div>
+<button class="cancel" onclick="closeModal()">
+Cancelar
+</button>
 
-    <div id="playerNameDisplay">👤 <span id="displayName">Pirata</span></div>
-    <nav id="gameNav" style="margin-top: 20px; display:none; position: relative; z-index: 3000;">
-        <button id="btnGame" class="nav-btn active" onclick="showPage('game')">🎮 Jogo</button>
-        <button id="btnQuests" class="nav-btn" onclick="showPage('quests'); renderQuests();">🎯 Missões</button>
-        <button id="btnIndex" class="nav-btn" onclick="showPage('index')">📖 Index</button>
-        <button id="btnMultiplayer" class="nav-btn" onclick="openMultiplayer()">⚔️ Batalha</button>
-    </nav>
+</div>
 
-    <div id="pageGame" class="page">
-        <button onclick="openSettings()" style="background: #555; color: white; position: fixed; top: 65px; right: 20px; z-index: 4500;">⚙️ Configs</button>
+</div>
 
-        <h1>🏴‍☠️ Cards Piece</h1>
-        <div id="moneyDisplay">💰 <span id="money">50</span></div>
-        <br>
-        <div id="statsDisplay">Ganho: <span id="incomeVal">5</span>/s | Próximo Reset: <span id="resetCostVal">500</span></div>
-        <br>
-        <div id="boostDisplay" style="display:none; font-size: 14px; color: #ff4757; font-weight: bold; background: rgba(0,0,0,0.6); padding: 5px 15px; border-radius: 10px; margin-bottom: 10px; border: 1px solid #ff4757;">🚀 Boost Ativo: <span id="boostTimeLeft">0</span>s</div>
+<div id="toast" class="toast">
+Salvo automaticamente ✓
+</div>
 
-        <h3>📦 Pack Recém Aberto</h3>
-        <div class="cards" id="cards"></div>
-
-        <hr style="border: 0.5px solid rgba(255,255,255,0.1); margin: 20px 0;">
-
-        <div id="controls">
-            <div style="display: flex; justify-content: center; align-items: center; gap: 10px; margin-bottom: 10px;">
-                <button class="primary" onclick="playClick();soundPack();openMultiple(1)">Abrir Pacote (100)</button>
-                <button class="primary" onclick="playClick();soundPack();openMultiple(5)">Abrir 5 Pacotes (500)</button>
-            </div>
-            
-            <div style="display: inline-block; vertical-align: middle;">
-                <button id="btnAutoSpin" class="auto-btn" onclick="buyOrToggleAutoSpin()">🔄 Giro Automático (5000) </button>
-                <select id="autoSpinAmount" style="padding: 10px; border-radius: 8px; font-weight: bold;" onchange="playClick()">
-                    <option value="1">1 por vez</option>
-                    <option value="5" selected>5 por vez</option>
-                </select>
-            </div>
-
-            <button id="btnReset" onclick="resetGame()">♻️ Resetar </button>
-            <button onclick="playClick();toggleSkip()">⏩ Skip: <span id="skipStatus">OFF</span></button>
-
-            <div style="margin-top: 10px; font-size: 14px;">
-                <b>Auto vender:</b>
-                <label><input type="checkbox" id="auto_common" onchange="toggleAuto('common')"> Comum</label>
-                <label><input type="checkbox" id="auto_uncommon" onchange="toggleAuto('uncommon')"> Incomum</label>
-                <label><input type="checkbox" id="auto_rare" onchange="toggleAuto('rare')"> Raro</label>
-                <label><input type="checkbox" id="auto_epic" onchange="toggleAuto('epic')"> Épico</label>
-                <label><input type="checkbox" id="auto_legendary" onchange="toggleAuto('legendary')"> Lendária</label>
-                <label><input type="checkbox" id="auto_mythic" onchange="toggleAuto('mythic')"> Mítica</label>
-            </div>
-        </div>
-
-        <h3>🎒 Inventário</h3>
-        <div id="inventory"></div>
-    </div>
-
-    <div id="pageQuests" class="page">
-        <h1>🎯 Missões de Pirata</h1>
-        <div id="questResetDisplay" style="display:none; color: #3498db; font-size: 16px; font-weight: bold; margin-bottom: 15px; background: rgba(0,0,0,0.5); padding: 10px; border-radius: 8px; border: 1px solid #3498db;">⏳ Todas completas! Novas em: <span id="questResetTimeLeft">0</span></div>
-        <div id="questsContainer" style="max-width: 600px; margin: 0 auto; text-align: left; padding-bottom: 300px;"></div>
-    </div>
-
-    <div id="pageIndex" class="page">
-        <h1>📖 Coleção de Lendas</h1>
-        <p>Progresso Total: <span id="unlockedCount">0</span> / 105</p>
-        <p style="color: #00ffff; font-weight: bold; font-size: 18px; text-shadow: 0 0 10px rgba(0, 255, 255, 0.8);">✨ Multiplicador de Sorte: <span id="luckDisplay">1x</span></p>
-        <div id="indexContainer"></div>
-    </div>
 
 <script>
-let audioCtx;
-let masterGain;
-let sounds = [];
-let playingMusic = false;
 
-let money = 100; 
-let inventory = {};
-let unlockedCards = new Set();
-let lockedIndexCards = new Set();
-let usedCodes = new Set(); 
-let autoSell = {common:false, uncommon:false, rare:false, epic:false, legendary:false, mythic:false};
-let skipAnimation = false;
-let gameStarted = false;
-let hasAutoSpin = false;
-let autoSpinActive = false;
-let autoSpinTimer = null;
-const AUTO_SPIN_COST = 5000;
+/* =========================
+   LISTA DE BRAWLERS
+========================= */
 
-let baseIncome = 5;
-let incomeMultiplier = 1;
-let currentResetPrice = 500;
-let boostEndTime = 0;
-let questResetEndTime = 0;
-let savedVolume = 0.15; // Volume padrão
-
-let stats = { packs: 0, legendaries: 0, sold: 0, spent: 0, mythics: 0 };
-let quests = [];
-
-const questPool = [
-    { text: '📦 Abra [X] pacotes', type: 'packs', rewardType: 'money', baseVal: 20, multiplier: 100, diff: 'Fácil' },
-    { text: '📦 Abra [X] pacotes', type: 'packs', rewardType: 'money', baseVal: 150, multiplier: 800, diff: 'Médio' },
-    { text: '📦 Abra [X] pacotes', type: 'packs', rewardType: 'boost', baseVal: 500, multiplier: 300, diff: 'Difícil' },
-    { text: '✨ Encontre [X] Lendárias', type: 'legendaries', rewardType: 'money', baseVal: 2, multiplier: 2000, diff: 'Fácil' },
-    { text: '✨ Encontre [X] Lendárias', type: 'legendaries', rewardType: 'money', baseVal: 10, multiplier: 8000, diff: 'Médio' },
-    { text: '🔥 Encontre [X] Mítica', type: 'mythics', rewardType: 'boost', baseVal: 1, multiplier: 600, diff: 'Difícil' },
-    { text: '💸 Venda [X] cartas', type: 'sold', rewardType: 'money', baseVal: 50, multiplier: 1500, diff: 'Fácil' },
-    { text: '💸 Venda [X] cartas', type: 'sold', rewardType: 'boost', baseVal: 300, multiplier: 120, diff: 'Médio' },
-    { text: '💸 Venda [X] cartas', type: 'sold', rewardType: 'boost', baseVal: 1000, multiplier: 600, diff: 'Difícil' },
-    { text: '💰 Gaste [X] Berries', type: 'spent', rewardType: 'money', baseVal: 5000, multiplier: 2500, diff: 'Fácil' },
-    { text: '💰 Gaste [X] Berries', type: 'spent', rewardType: 'boost', baseVal: 50000, multiplier: 180, diff: 'Médio' },
-    { text: '💰 Gaste [X] Berries', type: 'spent', rewardType: 'money', baseVal: 200000, multiplier: 100000, diff: 'Difícil' }
+const brawlers = [
+"8-Bit",
+"Bo",
+"Brock",
+"Lumi",
+"Max",
+"Meg",
+"Nori",
+"Rico",
+"Starr Nova",
+"Stu",
+"Surge",
+"Wendy",
+"Angelo",
+"Ash",
+"Bolt",
+"Byron",
+"Carl",
+"Colt",
+"Cordelius",
+"Crow",
+"Damian",
+"Edgar",
+"Emz",
+"Gene",
+"Gray",
+"Griff",
+"Leon",
+"Lou",
+"Meeple",
+"Mina",
+"Mortis",
+"Otis",
+"Pearl",
+"Pierce",
+"Piper",
+"Ruffs",
+"Shade",
+"Alli",
+"Belle",
+"Bibi",
+"Bull",
+"Charlie",
+"Chester",
+"Fang",
+"Finx",
+"Gus",
+"Kaze",
+"Kenji",
+"Kit",
+"Lily",
+"Mandy",
+"Maisie",
+"Moe",
+"Najia",
+"Nani",
+"Nita",
+"Penny",
+"Poco",
+"Sirius",
+"Spike",
+"Sprout",
+"Tara",
+"Amber",
+"Barley",
+"Buster",
+"Buzz",
+"Colette",
+"Darryl",
+"Draco",
+"Frank",
+"Gale",
+"Gigi",
+"Glowy",
+"Jae-Yong",
+"Juju",
+"Lola",
+"Melodie",
+"R-T",
+"Trunk",
+"Bea",
+"Berry",
+"Bonnie",
+"Doug",
+"Dynamike",
+"Eve",
+"Hank",
+"Janet",
+"Jessie",
+"Larry & Lawrie",
+"Mico",
+"Ollie",
+"Rosa",
+"Sandy",
+"Shelly",
+"Squeak",
+"Willow",
+"Ziggy",
+"Chuck",
+"Clancy",
+"El Primo",
+"Grom",
+"Jacky",
+"Mr. P",
+"Pam",
+"Sam",
+"Tick",
+"Cosmo"
 ];
 
-function generateRandomQuests() {
-    quests = [];
-    let poolCopy = [...questPool];
-    for(let i=0; i<5; i++) {
-        let idx = Math.floor(Math.random() * poolCopy.length);
-        let qTemplate = poolCopy.splice(idx, 1)[0];
-        quests.push({
-            id: 'rq_' + i + '_' + Date.now(),
-            text: qTemplate.text.replace('[X]', qTemplate.baseVal),
-            type: qTemplate.type,
-            target: qTemplate.baseVal,
-            rewardType: qTemplate.rewardType,
-            rewardValue: qTemplate.multiplier,
-            rewardText: qTemplate.rewardType === 'money' ? `💰 ${qTemplate.multiplier.toLocaleString()} Berries` : `🚀 Boost (${qTemplate.multiplier/60} min)`,
-            diff: qTemplate.diff,
-            claimed: false
-        });
-    }
-}
 
-let musicEnabled = true;
+/* =========================
+   TROFÉUS
+========================= */
 
-const values = { common: 10, uncommon: 15, rare: 30, epic: 115, legendary: 750, mythic: 7500, god: 50000 };
-
-const characters = [
-    {name:"Usopp",rarity:"common"},{name:"Nami",rarity:"common"},{name:"Chopper",rarity:"common"},
-    {name:"Buggy",rarity:"common"},{name:"Morgan",rarity:"common"},{name:"Cabaji",rarity:"common"},
-    {name:"Mohji",rarity:"common"},{name:"Shu",rarity:"common"},{name:"Higuma",rarity:"common"},
-    {name:"Alvida",rarity:"common"},{name:"Helmeppo",rarity:"common"},{name:"Fullbody",rarity:"common"},{name:"Chew",rarity:"common"},
-    {name:"Gin",rarity:"common"},{name:"Kuro",rarity:"common"},{name:"Don Krieg",rarity:"common"},{name:"Johnny",rarity:"common"},{name:"Yosaku",rarity:"common"},
-    {name:"Koby",rarity:"uncommon"},{name:"Gaimon",rarity:"uncommon"},{name:"Hatchan",rarity:"uncommon"},
-    {name:"Mr. 9",rarity:"uncommon"},{name:"Miss Monday",rarity:"uncommon"},{name:"Pearl",rarity:"uncommon"},
-    {name:"Boodle",rarity:"uncommon"},{name:"Chouchou",rarity:"uncommon"},{name:"Kaya",rarity:"uncommon"},
-    {name:"Ninjin",rarity:"uncommon"},{name:"Piiman",rarity:"uncommon"},{name:"Tamanegi",rarity:"uncommon"},
-    {name:"Nojiko",rarity:"uncommon"},{name:"Genzo",rarity:"uncommon"},{name:"Zeff",rarity:"uncommon"},
-    {name:"Patty",rarity:"uncommon"},{name:"Carne",rarity:"uncommon"},{name:"Bell-mère",rarity:"uncommon"},
-    {name:"Zoro",rarity:"rare"},{name:"Sanji",rarity:"rare"},{name:"Robin",rarity:"rare"},
-    {name:"Franky",rarity:"rare"},{name:"Brook",rarity:"rare"},{name:"Jinbe",rarity:"rare"},
-    {name:"Smoker",rarity:"rare"},{name:"Tashigi",rarity:"rare"},{name:"Vivi",rarity:"rare"},{name:"Perona",rarity:"rare"},
-    {name:"Bepo",rarity:"rare"},{name:"Bon Clay",rarity:"rare"},{name:"Bartolomeo",rarity:"rare"},{name:"Cavendish",rarity:"rare"},
-    {name:"Carrot",rarity:"rare"},{name:"Paulie",rarity:"rare"},{name:"Kaku",rarity:"rare"},{name:"Wyper",rarity:"rare"},
-    {name:"Ace",rarity:"epic"},{name:"Law",rarity:"epic"},{name:"Kid",rarity:"epic"},
-    {name:"Sabo",rarity:"epic"},{name:"Boa Hancock",rarity:"epic"},{name:"Marco",rarity:"epic"},
-    {name:"Katakuri",rarity:"epic"},{name:"Kuma",rarity:"epic"},{name:"Crocodile",rarity:"epic"},
-    {name:"Doflamingo",rarity:"epic"},{name:"Enel",rarity:"epic"},
-    {name:"Yamato",rarity:"epic"},{name:"King",rarity:"epic"},{name:"Queen",rarity:"epic"},{name:"Killer",rarity:"epic"},
-    {name:"Jack",rarity:"epic"},{name:"Cracker",rarity:"epic"},{name:"Smoothie",rarity:"epic"},
-    {name:"Kaido",rarity:"legendary"},{name:"Shanks",rarity:"legendary"},{name:"Whitebeard",rarity:"legendary"},
-    {name:"Mihawk",rarity:"legendary"},{name:"Big Mom",rarity:"legendary"},{name:"Akainu",rarity:"legendary"},
-    {name:"Aokiji",rarity:"legendary"},{name:"Kizaru",rarity:"legendary"},{name:"Garp",rarity:"legendary"},
-    {name:"Sengoku",rarity:"legendary"},{name:"Luffy",rarity:"legendary"},
-    {name:"Fujitora",rarity:"legendary"},{name:"Oden",rarity:"legendary"},{name:"Rayleigh",rarity:"legendary"},{name:"Blackbeard",rarity:"legendary"},
-    {name:"Green Bull",rarity:"legendary"},{name:"Sabot",rarity:"legendary"},{name:"Ben Beckman",rarity:"legendary"},{name:"Shiryu",rarity:"legendary"},{name:"Tsuru",rarity:"legendary"},
-    {name:"Gol D. Roger",rarity:"mythic"},{name:"Joy Boy",rarity:"mythic"},{name:"Rocks D. Xebec",rarity:"mythic"},
-    {name:"Ryuma",rarity:"mythic"},{name:"Dragon",rarity:"mythic"},{name:"Imu",rarity:"mythic"},
-    {name:"Nika",rarity:"mythic"},{name:"Sogeking",rarity:"mythic"},{name:"Zunesha",rarity:"mythic"},
-    {name:"Ancient Robot",rarity:"mythic"},{name:"Gorosei Saturn",rarity:"mythic"},{name:"Shirahoshi (Poseidon)",rarity:"mythic"},
-    {name:"Gorosei Mars",rarity:"mythic"},{name:"Gorosei Warcury",rarity:"mythic"},{name:"Gorosei Nusjuro",rarity:"mythic"},{name:"Gorosei Ju Peter",rarity:"mythic"},{name:"Kong",rarity:"mythic"},
-    {name:"😇Diandra😇",rarity:"god"},{name:"😇Dinean😇",rarity:"god"}
+const lowTrophies = [
+100,200,300,400,500,
+600,700,800,900,1000
 ];
 
-const PACK_PRICE = 100;
+const highTrophies = [
+1000,1100,1200,1300,1400,
+1500,1600,1700,1800,1900,2000
+];
 
-function openSettings() { playClick(); document.getElementById('settingsModal').style.display = 'block'; }
-function closeSettings() { playClick(); document.getElementById('settingsModal').style.display = 'none'; }
 
-function toggleMusicStatus() { 
-    musicEnabled = document.getElementById('toggleMusic').checked; 
-    playClick(); 
-    if(!musicEnabled) {
-        stopMusic();
-    } else if (gameStarted) {
-        startMusic();
-    }
-    saveGame(); 
+/* =========================
+   SALVAMENTO
+========================= */
+
+const STORAGE_KEY =
+"ranking_brawlers_cosmo";
+
+let data =
+JSON.parse(localStorage.getItem(STORAGE_KEY));
+
+if(!data){
+
+    data = {};
+
+    brawlers.forEach(name=>{
+        data[name] = null;
+    });
+
 }
 
-/* FUNÇÃO NOVA: AJUSTAR VOLUME */
-function changeVolume(val) {
-    savedVolume = parseFloat(val);
-    if(masterGain) {
-        masterGain.gain.setTargetAtTime(savedVolume, audioCtx.currentTime, 0.1);
-    }
-    saveGame();
+
+/* =========================
+   VARIÁVEIS
+========================= */
+
+let selectedBrawler = null;
+
+
+/* =========================
+   SALVAR
+========================= */
+
+function save(){
+
+    localStorage.setItem(
+        STORAGE_KEY,
+        JSON.stringify(data)
+    );
+
+    updateStatus();
+
 }
 
-function redeemCode() {
-    let code = prompt("Digite o código:");
-    if (!code) return;
-    code = code.toUpperCase().trim();
-    if (usedCodes.has(code)) { alert("❌ Este código já foi resgatado anteriormente!"); return; }
-    let success = false;
-    if (code === "D1N34NL1ND0") {
-        money = Infinity; baseIncome = 999999999;
-        alert("💰 CÓDIGO ATIVADO: DINHEIRO INFINITO LIBERADO!");
-        soundGod(); success = true;
-    } else if (code === "CARDSPIECE2026" || code === "2026DS2026") {
-        money += 100;
-        alert("🎁 CÓDIGO ATIVADO: Você recebeu 100 Berries!");
-        soundQuestComplete(); success = true;
-    } 
-    if (success) { usedCodes.add(code); updateMoney(); saveGame(); } 
-    else { alert("❌ Código inválido ou expirado."); }
+
+/* =========================
+   STATUS
+========================= */
+
+function updateStatus(){
+
+    let classified =
+    Object.values(data)
+    .filter(x=>x !== null)
+    .length;
+
+    let trophies =
+    Object.values(data)
+    .reduce((total,x)=>{
+        return total + (x || 0);
+    },0);
+
+    document.getElementById("status").innerHTML =
+    `<b>${classified}/${brawlers.length}</b>
+    classificados •
+    <b>${trophies.toLocaleString("pt-BR")}</b>
+    troféus totais •
+    💾 salvamento automático`;
+
 }
 
-function fullResetGame() {
-    const confirm1 = confirm("ATENÇÃO: Isso apagará TODO o seu progresso permanentemente (incluindo códigos já usados). Deseja continuar?");
-    if (confirm1) {
-        const confirm2 = confirm("TEM CERTEZA? Não há como recuperar os dados após isso.");
-        if (confirm2) { localStorage.removeItem('cardsPieceSave'); window.location.reload(); }
-    }
-}
 
-function buyOrToggleAutoSpin() {
-    playClick();
-    if (!hasAutoSpin) {
-        if (money >= AUTO_SPIN_COST) { money -= AUTO_SPIN_COST; stats.spent += AUTO_SPIN_COST; hasAutoSpin = true; updateAutoSpinUI(); updateMoney(); saveGame(); } 
-        else { alert("Você precisa de 5.000 Berries!"); }
-    } else {
-        autoSpinActive = !autoSpinActive; updateAutoSpinUI();
-        if (autoSpinActive) startAutoSpinLoop(); else stopAutoSpinLoop();
-    }
-}
+/* =========================
+   CRIAR CARD
+========================= */
 
-function updateAutoSpinUI() {
-    const btn = document.getElementById("btnAutoSpin");
-    if (!hasAutoSpin) { btn.innerText = `🔄 Giro Automático (${AUTO_SPIN_COST})`; btn.classList.remove("auto-active"); }
-    else { btn.innerText = autoSpinActive ? "🔄 Auto Giro: LIGADO" : "🔄 Auto Giro: DESLIGADO"; if (autoSpinActive) btn.classList.add("auto-active"); else btn.classList.remove("auto-active"); }
-}
+function createCard(name){
 
-function startAutoSpinLoop() {
-    if (autoSpinTimer) clearTimeout(autoSpinTimer);
-    const runLoop = async () => {
-        if (!autoSpinActive) return;
-        const amount = parseInt(document.getElementById("autoSpinAmount").value);
-        const cost = amount * PACK_PRICE;
-        if (money >= cost) { 
-            await openMultiple(amount); 
-            autoSpinTimer = setTimeout(runLoop, 500); 
-        } else { 
-            autoSpinActive = false; stopAutoSpinLoop(); updateAutoSpinUI(); 
-        }
+    const card =
+    document.createElement("div");
+
+    card.className = "card";
+
+    card.textContent = name;
+
+    card.onclick = ()=>{
+        openModal(name);
     };
-    runLoop();
-}
 
-function stopAutoSpinLoop() { if (autoSpinTimer) { clearTimeout(autoSpinTimer); autoSpinTimer = null; } }
+    card.draggable = true;
 
-function resetGame() {
-    if(money < currentResetPrice) { alert(`Precisa de ${currentResetPrice} Berries!`); return; }
-    if(confirm(`Resetar por ${currentResetPrice}? +5/s de ganho.`)) {
-        money = 0; inventory = {}; unlockedCards = new Set([...lockedIndexCards]); baseIncome += 5; incomeMultiplier = 1;
-        boostEndTime = 0; questResetEndTime = 0;
-        currentResetPrice = Math.floor(currentResetPrice * 2.0);
-        hasAutoSpin = false; autoSpinActive = false; stopAutoSpinLoop(); updateAutoSpinUI();
-        stats = { packs: 0, legendaries: 0, sold: 0, spent: 0, mythics: 0 };
-        generateRandomQuests();
-        updateMoney(); renderInventory(); renderIndex(); renderQuests(); saveGame();
-    }
-}
-
-function updateSkipStatus() {
-    const span = document.getElementById("skipStatus");
-    if(span) { span.innerText = skipAnimation ? "ON" : "OFF"; span.style.color = skipAnimation ? "#2ecc71" : "#ff4d4d"; }
-}
-
-/* --- SISTEMA DE MÚSICA NOVO --- */
-function initAudio(){ 
-    if(!audioCtx) { 
-        audioCtx = new (window.AudioContext || window.webkitAudioContext)(); 
-        masterGain = audioCtx.createGain();
-        masterGain.gain.value = savedVolume; // Usa o volume salvo
-        masterGain.connect(audioCtx.destination);
-    } 
-}
-
-function createPad(freq, type="sine", volume=0.05){  
-    const osc = audioCtx.createOscillator();  
-    const gain = audioCtx.createGain();  
-    osc.type = type;  
-    osc.frequency.value = freq;  
-    gain.gain.value = volume;  
-    osc.connect(gain);  
-    gain.connect(masterGain);  
-    osc.start();  
-    return {osc, gain};  
-}  
-
-function startMusic(){  
-    if(!musicEnabled || playingMusic) return;
-    playingMusic = true;
-
-    const chords = [  
-        [261.63,329.63,392.00], // C  
-        [220.00,261.63,329.63], // Am  
-        [196.00,246.94,392.00], // G  
-        [174.61,220.00,349.23]  // F  
-    ];  
-  
-    let chordIndex = 0;  
-  
-    function playChord(){  
-        if(!playingMusic) return;  
-        
-        sounds.forEach(s=>{  
-            s.gain.gain.exponentialRampToValueAtTime(0.0001,audioCtx.currentTime+1);  
-            setTimeout(()=> { try { s.osc.stop(); } catch(e) {} }, 1200);  
-        });  
-        sounds=[];  
-  
-        let chord = chords[chordIndex];  
-        chord.forEach((freq,i)=>{  
-            sounds.push(createPad(freq,"sine",0.03));  
-            sounds.push(createPad(freq*2,"triangle",0.01));  
-        });  
-  
-        chordIndex = (chordIndex + 1) % chords.length;  
-        setTimeout(playChord, 4000);  
-    }  
-  
-    function ambientNotes(){  
-        if(!playingMusic) return;  
-        const notes = [523.25,587.33,659.25,783.99];  
-        const osc = audioCtx.createOscillator();  
-        const gain = audioCtx.createGain();  
-        osc.type = "triangle";  
-        osc.frequency.value = notes[Math.floor(Math.random()*notes.length)];  
-        gain.gain.value = 0;  
-        osc.connect(gain);  
-        gain.connect(masterGain);  
-        osc.start();  
-        gain.gain.linearRampToValueAtTime(0.03, audioCtx.currentTime+0.2);  
-        gain.gain.linearRampToValueAtTime(0, audioCtx.currentTime+2);  
-        osc.stop(audioCtx.currentTime+2);  
-        setTimeout(ambientNotes, 2500);  
-    }  
-
-    playChord();  
-    ambientNotes();  
-}  
-
-function stopMusic() {
-    playingMusic = false;
-    sounds.forEach(s => { try { s.osc.stop(); } catch(e){} });
-    sounds = [];
-}
-
-function beep(freq, time=0.2, type="sine", vol=1.0){ 
-    if(!audioCtx) return; 
-    let osc = audioCtx.createOscillator(); let gain = audioCtx.createGain(); 
-    osc.type = type; osc.frequency.value = freq; 
-    gain.gain.setValueAtTime(0, audioCtx.currentTime); gain.gain.linearRampToValueAtTime(vol * 0.5, audioCtx.currentTime + 0.02); gain.gain.exponentialRampToValueAtTime(0.001, audioCtx.currentTime + time); 
-    osc.connect(gain); gain.connect(audioCtx.destination); osc.start(); osc.stop(audioCtx.currentTime + time); 
-}
-
-function soundPack(){ beep(520, 0.3, "sine", 0.9); }
-function soundLegendary(){ beep(880, 0.5, "triangle", 1.0); }
-function soundMythic(){ beep(120, 0.7, "sawtooth", 1.0); }
-function soundGod(){ beep(1500, 1.0, "sine", 1.0); beep(1000, 0.8, "triangle", 0.9); }
-function soundSell(){ beep(400, 0.2, "sine", 0.8); }
-function playClick(){ beep(350, 0.1, "sine", 0.7); }
-function soundQuestComplete(){ beep(600, 0.1, "sine", 0.8); setTimeout(() => beep(800, 0.3, "sine", 1), 100); }
-
-function saveGame() { 
-    localStorage.setItem('cardsPieceSave', JSON.stringify({ 
-        money, inventory, unlockedCards: Array.from(unlockedCards), lockedIndexCards: Array.from(lockedIndexCards), 
-        usedCodes: Array.from(usedCodes),
-        autoSell, skipAnimation, baseIncome, currentResetPrice, hasAutoSpin, musicEnabled, stats, quests, boostEndTime, questResetEndTime,
-        savedVolume // Salva o volume
-    })); 
-}
-
-function loadGame() {
-    const saved = localStorage.getItem('cardsPieceSave');
-    if(saved) {
-        const data = JSON.parse(saved); 
-        money = data.money; inventory = data.inventory || {}; 
-        unlockedCards = new Set(data.unlockedCards || []); lockedIndexCards = new Set(data.lockedIndexCards || []); 
-        usedCodes = new Set(data.usedCodes || []);
-        autoSell = data.autoSell || {common:false, uncommon:false, rare:false, epic:false, legendary:false, mythic:false}; 
-        skipAnimation = data.skipAnimation || false; baseIncome = data.baseIncome || 5; 
-        currentResetPrice = data.currentResetPrice || 500; hasAutoSpin = data.hasAutoSpin || false; 
-        musicEnabled = data.musicEnabled !== undefined ? data.musicEnabled : true;
-        boostEndTime = data.boostEndTime || 0; questResetEndTime = data.questResetEndTime || 0;
-        savedVolume = data.savedVolume !== undefined ? data.savedVolume : 0.15; // Carrega o volume
-        
-        document.getElementById('volumeControl').value = savedVolume;
-        document.getElementById('toggleMusic').checked = musicEnabled; updateAutoSpinUI(); updateMoney(); renderInventory(); updateSkipStatus();
-        for(let r in autoSell) { if(document.getElementById('auto_'+r)) document.getElementById('auto_'+r).checked = autoSell[r]; }
-    } else { generateRandomQuests(); }
-}
-
-function startGame() { 
-    initAudio(); if(audioCtx.state === 'suspended') audioCtx.resume(); loadGame(); 
-    if(musicEnabled) startMusic();
-    
-    setInterval(() => { 
-        money += (baseIncome * incomeMultiplier); updateMoney(); 
-        let now = Date.now();
-        if (boostEndTime > now) {
-            let left = Math.ceil((boostEndTime - now) / 1000);
-            document.getElementById("boostDisplay").style.display = "inline-block";
-            document.getElementById("boostTimeLeft").innerText = left;
-            document.getElementById("moneyDisplay").classList.add("boost-active");
-            incomeMultiplier = 3; 
-        } else if (boostEndTime !== 0) {
-            boostEndTime = 0; incomeMultiplier = 1;
-            document.getElementById("boostDisplay").style.display = "none";
-            document.getElementById("moneyDisplay").classList.remove("boost-active");
-            renderIndex(); saveGame();
-        }
-        if (questResetEndTime > now) {
-            let left = Math.ceil((questResetEndTime - now) / 1000);
-            let m = Math.floor(left / 60); let s = left % 60;
-            let displayEl = document.getElementById("questResetDisplay");
-            if (displayEl) { displayEl.style.display = "inline-block"; document.getElementById("questResetTimeLeft").innerText = `${m}m ${s}s`; }
-        } else if (questResetEndTime !== 0 && questResetEndTime <= now) {
-            questResetEndTime = 0; stats = { packs: 0, legendaries: 0, sold: 0, spent: 0, mythics: 0 };
-            generateRandomQuests(); let displayEl = document.getElementById("questResetDisplay");
-            if (displayEl) displayEl.style.display = "none"; renderQuests(); saveGame();
-        }
-    }, 1000); 
-    setInterval(saveGame, 30000); 
-    document.getElementById('startScreen').style.opacity = '0'; 
-    setTimeout(() => { document.getElementById('startScreen').style.display = 'none'; document.getElementById('gameNav').style.display = 'block'; document.getElementById('pageGame').classList.add('active'); gameStarted = true; }, 500); 
-}
-
-function showPage(pageName){ 
-    playClick(); 
-    document.querySelectorAll('.page').forEach(p => p.classList.remove('active')); 
-    document.querySelectorAll('.nav-btn').forEach(b => b.classList.remove('active')); 
-    const moneyDisplay = document.getElementById('moneyDisplay');
-    if(pageName === 'game'){ 
-        document.getElementById('pageGame').classList.add('active'); document.getElementById('btnGame').classList.add('active'); 
-        document.getElementById('pageGame').querySelector('h1').after(moneyDisplay);
-    } else if(pageName === 'quests') {
-        document.getElementById('pageQuests').classList.add('active'); document.getElementById('btnQuests').classList.add('active');
-        document.getElementById('pageQuests').querySelector('h1').after(moneyDisplay);
-        renderQuests();
-    } else { 
-        document.getElementById('pageIndex').classList.add('active'); document.getElementById('btnIndex').classList.add('active'); 
-        document.getElementById('pageIndex').querySelector('h1').after(moneyDisplay);
-        renderIndex(); 
-    } 
-}
-
-function calculateLuckMultiplier() {
-    let luckMultiplier = 0.75;
-    const rarities = ["common", "uncommon", "rare", "epic", "legendary", "mythic", "god"];
-    rarities.forEach(rar => {
-        let chars = characters.filter(c => c.rarity === rar);
-        if (chars.length > 0 && chars.every(c => unlockedCards.has(c.name))) { luckMultiplier *= 1.5; }
-    });
-    if (Date.now() < boostEndTime) luckMultiplier *= 2; 
-    return luckMultiplier;
-}
-
-function getRandomCard(){ 
-    let r = Math.random(); let luckMultiplier = calculateLuckMultiplier(); r = 1 - ((1 - r) / luckMultiplier);
-    if(r < 0.70) return getBy("common");       
-    if(r < 0.90) return getBy("uncommon");     
-    if(r < 0.97) return getBy("rare");         
-    if(r < 0.998) return getBy("epic");        
-    if(r < 0.9997) return getBy("legendary");  
-    if(r < 0.9999) return getBy("mythic");     
-    if(r < 0.99991) return getBy("god");       
-    return getBy("legendary");
-}
-
-function getBy(r){ let list = characters.filter(c => c.rarity === r); return list[Math.floor(Math.random() * list.length)]; }
-function toggleAuto(r){ autoSell[r] = !autoSell[r]; saveGame(); }
-function toggleSkip(){ skipAnimation = !skipAnimation; updateSkipStatus(); saveGame(); }
-
-async function openMultiple(times){
-    let totalCost = PACK_PRICE * times;
-    if(money < totalCost){ if(autoSpinActive) { autoSpinActive = false; stopAutoSpinLoop(); updateAutoSpinUI(); } alert("Sem berries!"); return; }
-    money -= totalCost; stats.spent += totalCost; updateMoney(); stats.packs += times;
-    let container = document.getElementById("cards"); container.innerHTML = "";
-    for(let p = 0; p < times; p++){
-        for(let i = 0; i < 5; i++){
-            if(!skipAnimation) await new Promise(r => setTimeout(r, 150));
-            let card = getRandomCard(); unlockedCards.add(card.name);
-            if(card.rarity === "legendary") stats.legendaries++;
-            if(card.rarity === "mythic") stats.mythics++;
-            if(autoSell[card.rarity]){ 
-                money += values[card.rarity]; stats.sold++; updateMoney(); 
-                let sold = document.createElement("div"); sold.className = `card sold ${card.rarity}`; 
-                sold.dataset.name = card.name; sold.dataset.rarity = `[${card.rarity.toUpperCase()}]`; sold.dataset.price = values[card.rarity]; 
-                container.appendChild(sold); if(!skipAnimation) await new Promise(r => setTimeout(r, 150)); continue; 
-            }
-            let key = card.name + "_" + card.rarity; if(!inventory[key]) inventory[key] = {name: card.name, rarity: card.rarity, count: 0}; inventory[key].count++;
-            let div = document.createElement("div"); div.className = "card"; div.innerHTML = `<div class="inner"><div class="front">?</div><div class="back ${card.rarity}"><h3>${card.name}</h3></div></div>`; container.appendChild(div);
-            if(!skipAnimation) await new Promise(r => setTimeout(r, 150));
-            div.classList.add("flip");
-            if(card.rarity === "legendary") { div.classList.add("legendary-glow"); soundLegendary(); }
-            if(card.rarity === "mythic") { div.classList.add("mythic-glow"); soundMythic(); const overlay = document.getElementById("mythicOverlay"); overlay.style.display = "flex"; setTimeout(() => overlay.style.display = "none", 1500); }
-            if(card.rarity === "god") { div.classList.add("god-glow"); soundGod(); const overlay = document.getElementById("godOverlay"); overlay.style.display = "flex"; setTimeout(() => overlay.style.display = "none", 2000); }
-        }
-    }
-    renderInventory(); saveGame();
-}
-
-function renderInventory(){
-    let inv = document.getElementById("inventory"); inv.innerHTML = "";
-    ["common","uncommon","rare","epic","legendary","mythic","god"].forEach(r => {
-        let group = Object.values(inventory).filter(c => c.rarity === r); if(group.length === 0) return;
-        let section = document.createElement("div"); 
-        section.innerHTML = `<div style="display:flex; justify-content:center; align-items:center; gap:10px; margin:10px 0 5px 0;"><h4 style="margin:0;">${r.toUpperCase()}</h4><button style="background: #e74c3c; color: white; padding: 4px 8px; font-size: 11px; border: 1px solid #c0392b; border-radius: 4px; cursor: pointer;" onclick="sellAllByRarity('${r}')">Vender Todas</button></div>`;
-        let container = document.createElement("div"); container.className = "inventory-group";
-        group.forEach(card => {
-            let div = document.createElement("div"); div.className = "card flip"; div.innerHTML = `<div class="inner"><div class="back ${card.rarity}"><h3>${card.name}</h3><p>${card.count}x</p><p>💰 ${values[card.rarity]}</p><div style="margin-top:4px; display:flex; gap:3px; justify-content:center;"><button style="padding: 4px 6px; font-size: 10px;" onclick="sellCard('${card.name}', '${card.rarity}', 1)">Vender 1</button><button style="padding: 4px 6px; font-size: 10px;" onclick="sellCard('${card.name}', '${card.rarity}', 'max')">Max</button></div></div></div>`; container.appendChild(div);
-        });
-        section.appendChild(container); inv.appendChild(section);
-    });
-}
-
-function sellCard(name, rarity, amount){
-    let key = name + "_" + rarity; let card = inventory[key]; if(!card) return;
-    let sellAmount = (amount === "max") ? card.count : 1; 
-    money += values[rarity] * sellAmount; card.count -= sellAmount; stats.sold += sellAmount;
-    if(card.count <= 0) delete inventory[key]; 
-    updateMoney(); renderInventory(); soundSell(); saveGame();
-}
-
-function sellAllByRarity(rarity) {
-    let group = Object.values(inventory).filter(c => c.rarity === rarity); if (group.length === 0) return;
-    let totalValue = 0; let totalCards = 0;
-    group.forEach(card => { totalValue += values[rarity] * card.count; totalCards += card.count; });
-    if (confirm(`Vender ${totalCards} cartas ${rarity.toUpperCase()} por 💰 ${totalValue}?`)) {
-        money += totalValue; stats.sold += totalCards;
-        for (let key in inventory) { if (inventory[key].rarity === rarity) delete inventory[key]; }
-        updateMoney(); renderInventory(); soundSell(); saveGame();
-    }
-}
-
-function updateMoney(){
-    const moneyEl = document.getElementById("money");
-    if (moneyEl) {
-        if (money === Infinity) moneyEl.innerText = "INFINITO";
-        else moneyEl.innerText = Math.floor(money).toLocaleString();
-    }
-    const incomeEl = document.getElementById("incomeVal");
-    if (incomeEl) incomeEl.innerText = (baseIncome * incomeMultiplier);
-    const resetEl = document.getElementById("resetCostVal");
-    if (resetEl) resetEl.innerText = currentResetPrice.toLocaleString();
-}
-
-function renderQuests() {
-    let container = document.getElementById("questsContainer"); if(!container) return; container.innerHTML = "";
-    quests.forEach(q => {
-        let progress = stats[q.type]; let isComplete = progress >= q.target; let btnHtml = "";
-        if (q.claimed) btnHtml = `<button disabled style="background: rgba(255,255,255,0.1); border: 1px solid gray; color: gray; padding: 10px 15px; border-radius: 8px;">Coletado ✅</button>`;
-        else if (isComplete) btnHtml = `<button onclick="claimQuest('${q.id}')" style="background: #27ae60; color: white; padding: 10px 15px; border: 2px solid white; border-radius: 8px; font-weight: bold; cursor: pointer; box-shadow: 0 0 10px #27ae60; animation: pulse-green 1.5s infinite;">Resgatar 🎁</button>`;
-        else {
-            let progressPct = Math.min((progress / q.target) * 100, 100);
-            btnHtml = `<div style="text-align: right;"><span style="font-size: 14px; color: #ccc; font-weight:bold;">${Math.floor(Math.min(progress, q.target)).toLocaleString()} / ${q.target.toLocaleString()}</span><div style="width: 100px; height: 8px; background: #333; border-radius: 5px; margin-top: 5px; border: 1px solid #555;"><div style="width: ${progressPct}%; height: 100%; background: #3498db; border-radius: 5px; transition: width 0.3s;"></div></div></div>`;
-        }
-        let diffColor = q.diff === 'Fácil' ? '#2ecc71' : (q.diff === 'Médio' ? '#f1c40f' : '#e74c3c');
-        let div = document.createElement("div");
-        div.style.background = "rgba(0,0,0,0.6)"; div.style.padding = "15px"; div.style.borderRadius = "10px"; div.style.border = `2px solid ${q.claimed ? '#444' : (isComplete ? 'gold' : '#3498db')}`;
-        div.style.marginBottom = "12px"; div.style.display = "flex"; div.style.justifyContent = "space-between"; div.style.alignItems = "center";
-        div.innerHTML = `<div><span style="font-size: 10px; background: ${diffColor}; color: black; padding: 2px 6px; border-radius: 4px; font-weight: bold; text-transform: uppercase;">${q.diff}</span><h3 style="margin: 5px 0 5px 0; font-size: 16px; color: ${q.claimed ? '#aaa' : 'white'};">${q.text}</h3><p style="margin: 0; font-size: 13px; color: ${q.claimed ? '#888' : 'gold'}; font-weight: bold;">Recompensa: ${q.rewardText}</p></div><div>${btnHtml}</div>`;
-        container.appendChild(div);
-    });
-}
-
-function claimQuest(id) {
-    let q = quests.find(x => x.id === id); if (!q || q.claimed || stats[q.type] < q.target) return;
-    soundQuestComplete(); q.claimed = true;
-    if (q.rewardType === 'money') { money += q.rewardValue; updateMoney(); alert(`🎉 Recompensa resgatada: ${q.rewardText}!`); }
-    else if (q.rewardType === 'boost') activateBoost(q.rewardValue);
-    if (quests.every(quest => quest.claimed) && questResetEndTime === 0) questResetEndTime = Date.now() + (5 * 60 * 1000);
-    renderQuests(); saveGame();
-}
-
-function activateBoost(seconds) {
-    incomeMultiplier = 2; if (boostEndTime > Date.now()) boostEndTime += seconds * 1000; else boostEndTime = Date.now() + (seconds * 1000);
-    updateMoney(); document.getElementById("moneyDisplay").classList.add("boost-active"); document.getElementById("boostDisplay").style.display = "inline-block";
-    alert(`🚀 BOOST ATIVADO! Sorte dobrada e Ganhos 2x!`); renderIndex(); saveGame();
-}
-
-function renderIndex(){
-    let container = document.getElementById("indexContainer"); container.innerHTML = "";
-    document.getElementById("unlockedCount").innerText = unlockedCards.size;
-    let luckDisplay = document.getElementById("luckDisplay");
-    if(luckDisplay) { let luck = calculateLuckMultiplier(); luckDisplay.innerText = luck === 1 ? "1x" : luck.toFixed(2) + "x"; }
-    ["common","uncommon","rare","epic","legendary","mythic","god"].forEach(r => {
-        let title = document.createElement("h4"); title.innerText = r.toUpperCase(); container.appendChild(title);
-        let groupDiv = document.createElement("div"); groupDiv.className = "index-group";
-        characters.filter(c => c.rarity === r).forEach(char => {
-            let isUnlocked = unlockedCards.has(char.name); let isLocked = lockedIndexCards.has(char.name); let lockCost = values[char.rarity] * 30; 
-            let div = document.createElement("div"); div.className = `index-card ${char.rarity} ${isUnlocked ? '' : 'locked'}`; 
-            let htmlContent = `<span style="position: absolute; top: 35%; left: 50%; transform: translate(-50%, -50%); width: 90%;"><b>${isUnlocked ? char.name : '???'}</b></span>`;
-            if(isUnlocked) {
-                if(isLocked) htmlContent += `<div style="position: absolute; bottom: 8px; left: 50%; transform: translateX(-50%); width: 100%; font-size: 10px; color: gold; text-shadow: 1px 1px 2px #000;">🔒 Salvo</div>`;
-                else htmlContent += `<button onclick="lockIndexCard('${char.name}', ${lockCost})" style="position: absolute; bottom: 10px; left: 10%; width: 80%; font-size: 11px; padding: 8px 0; cursor: pointer; border-radius: 6px; border: none; background: gold; color: black; font-weight: bold; text-align: center;">Trancar ($${lockCost.toLocaleString()})</button>`;
-            }
-            div.innerHTML = htmlContent; groupDiv.appendChild(div);
-        });
-        container.appendChild(groupDiv);
-    });
-}
-
-function lockIndexCard(name, cost) {
-    playClick(); if(money >= cost) { money -= cost; stats.spent += cost; lockedIndexCards.add(name); updateMoney(); renderIndex(); saveGame(); } else { alert("Você precisa de " + cost.toLocaleString() + " Berries!"); }
-}
-
-window.addEventListener("load", function() {
-    const loader = document.getElementById("loadingScreen");
-    setTimeout(() => { loader.classList.add("loader-hidden"); }, 1200); 
-});
-
-
-// === SISTEMA MULTIPLAYER - NOME DO JOGADOR ===
-let playerName = localStorage.getItem('playerName') || '';
-
-function checkPlayerName() {
-    if (!playerName) {
-        document.getElementById('nameScreen').style.display = 'flex';
-        document.getElementById('startScreen').style.display = 'none';
-        return false;
-    }
-    return true;
-}
-
-function savePlayerName() {
-    const input = document.getElementById('playerNameInput');
-    const name = input.value.trim();
-    if (name.length < 2) {
-        alert('Nome muito curto! Mínimo 2 caracteres.');
-        return;
-    }
-    if (name.length > 15) {
-        alert('Nome muito longo! Máximo 15 caracteres.');
-        return;
-    }
-    playerName = name;
-    localStorage.setItem('playerName', playerName);
-    document.getElementById('nameScreen').style.display = 'none';
-    document.getElementById('startScreen').style.display = 'flex';
-    document.getElementById('displayName').textContent = playerName;
-    document.getElementById('playerNameDisplay').style.display = 'block';
-    playClick();
-    soundQuestComplete();
-}
-
-// Verifica nome ao carregar
-const originalWindowLoad = window.onload;
-window.addEventListener('load', function() {
-    setTimeout(() => {
-        if (!playerName && document.getElementById('nameScreen')) {
-            checkPlayerName();
-        } else if (playerName) {
-            document.getElementById('displayName').textContent = playerName;
-            document.getElementById('playerNameDisplay').style.display = 'block';
-        }
-    }, 1400);
-});
-
-// Atualiza nome ao iniciar jogo
-const originalStartGame = startGame;
-startGame = function() {
-    if (playerName) {
-        document.getElementById('displayName').textContent = playerName;
-        document.getElementById('playerNameDisplay').style.display = 'block';
-    }
-    originalStartGame();
-};
-
-console.log('✅ Sistema de Nome e Firebase carregado!');
-
-
-
-// ============================================================
-// === SISTEMA MULTIPLAYER PvP — BATALHA EM TEMPO REAL ===
-// ============================================================
-
-let currentRoom = null;
-let isHost = false;
-let battleState = null;
-let roomListener = null;
-let onlineListener = null;
-let inviteListener = null;
-let battleEndHandled = false;
-
-// ── helpers de deck ──────────────────────────────────────
-let selectedDeckCards = []; // cards chosen by player in deck selection
-let deckSelectionResolve = null; // promise resolver for deck selection
-
-function buildDeckFromSelectedCards() {
-    const rarityValues = { comum: 1, incomum: 1, rara: 2, epica: 3, lendaria: 4, mitica: 5, god: 6,
-                           common: 1, uncommon: 1, rare: 2, epic: 3, legendary: 4, mythic: 5 };
-    const deck = [];
-    for (const card of selectedDeckCards) {
-        const r = (card.rarity || '').toLowerCase().normalize('NFD').replace(/[\u0300-\u036f]/g, '');
-        const rv = rarityValues[r] || 1;
-        // Add multiple copies based on quantity (up to 4 per card for a 20-card deck)
-        const copies = Math.min(card.qty || 1, Math.floor(20 / selectedDeckCards.length) || 4);
-        for (let i = 0; i < copies; i++) {
-            deck.push({ name: card.name, rarity: card.rarity, cost: rv, atk: rv * 2 });
-        }
-        if (deck.length >= 20) break;
-    }
-    while (deck.length < 10) {
-        deck.push({ name: 'Golpe Básico', rarity: 'Comum', cost: 1, atk: 2 });
-    }
-    return deck.sort(() => Math.random() - 0.5);
-}
-
-function openDeckSelection() {
-    return new Promise((resolve) => {
-        deckSelectionResolve = resolve;
-        selectedDeckCards = [];
-
-        const modal = document.getElementById('deckSelectModal');
-        const grid = document.getElementById('deckCardGrid');
-        grid.innerHTML = '';
-        document.getElementById('deckSelectedCount').textContent = '0';
-        document.getElementById('deckConfirmBtn').disabled = true;
-
-        const rarityValues = { comum: 1, incomum: 1, rara: 2, epica: 3, lendaria: 4, mitica: 5, god: 6,
-                               common: 1, uncommon: 1, rare: 2, epic: 3, legendary: 4, mythic: 5 };
-        const rarityEmojis = { common: '⚪', uncommon: '🟢', rare: '🔵', epic: '🟣', legendary: '🟡', mythic: '🔴', god: '✨' };
-        const rarityOrder = { god: 0, mythic: 1, legendary: 2, epic: 3, rare: 4, uncommon: 5, common: 6 };
-
-        const invCards = Object.values(inventory);
-        if (invCards.length === 0) {
-            grid.innerHTML = '<p style="color:#e74c3c;text-align:center;padding:20px;">⚠️ Seu inventário está vazio!<br>Abra pacotes para conseguir cartas.</p>';
-            document.getElementById('deckConfirmBtn').disabled = true;
-            modal.classList.add('active');
-            return;
-        }
-
-        // Sort by rarity then name
-        invCards.sort((a, b) => {
-            const ra = (a.rarity || '').toLowerCase();
-            const rb = (b.rarity || '').toLowerCase();
-            return (rarityOrder[ra] ?? 7) - (rarityOrder[rb] ?? 7) || a.name.localeCompare(b.name);
-        });
-
-        invCards.forEach(card => {
-            const r = (card.rarity || '').toLowerCase().normalize('NFD').replace(/[\u0300-\u036f]/g, '');
-            const rv = rarityValues[r] || 1;
-            const emoji = rarityEmojis[r] || '⚪';
-            const rarityColors = { common:'#95a5a6', uncommon:'#2ecc71', rare:'#3498db', epic:'#9b59b6', legendary:'#f39c12', mythic:'#e74c3c', god:'#00ffff' };
-            const color = rarityColors[r] || '#fff';
-
-            const el = document.createElement('div');
-            el.className = 'deck-card-option';
-            el.style.borderColor = color + '66';
-            el.innerHTML = `
-                <span class="dc-qty">x${card.qty || 1}</span>
-                <span class="dc-emoji">${emoji}</span>
-                <span class="dc-name">${card.name.substring(0, 12)}</span>
-                <span class="dc-rarity" style="color:${color}">${card.rarity}</span>
-                <span class="dc-atk">⚔️ ${rv * 2} | 💎 ${rv}</span>
-            `;
-            el.onclick = () => toggleDeckCard(el, card, color);
-            grid.appendChild(el);
-        });
-
-        modal.classList.add('active');
-    });
-}
-
-function toggleDeckCard(el, card, color) {
-    const idx = selectedDeckCards.findIndex(c => c.name === card.name);
-    if (idx >= 0) {
-        // Deselect
-        selectedDeckCards.splice(idx, 1);
-        el.classList.remove('selected');
-        el.style.borderColor = color + '66';
-    } else {
-        if (selectedDeckCards.length >= 5) {
-            el.style.animation = 'none';
-            el.offsetHeight; // reflow
-            el.style.animation = 'deckShake 0.3s ease';
-            setTimeout(() => el.style.animation = '', 300);
-            return;
-        }
-        selectedDeckCards.push(card);
-        el.classList.add('selected');
-        el.style.borderColor = '#27ae60';
-    }
-    const count = selectedDeckCards.length;
-    document.getElementById('deckSelectedCount').textContent = count;
-    document.getElementById('deckConfirmBtn').disabled = count !== 5;
-}
-
-function confirmDeckSelection() {
-    if (selectedDeckCards.length !== 5) return;
-    document.getElementById('deckSelectModal').classList.remove('active');
-    if (deckSelectionResolve) {
-        deckSelectionResolve(buildDeckFromSelectedCards());
-        deckSelectionResolve = null;
-    }
-}
-
-function cancelDeckSelection() {
-    document.getElementById('deckSelectModal').classList.remove('active');
-    if (deckSelectionResolve) {
-        // Cancel ready state
-        deckSelectionResolve(null);
-        deckSelectionResolve = null;
-    }
-}
-
-function buildGuestDeck() {
-    const rarityValues = { common: 1, uncommon: 1, rare: 2, epic: 3, legendary: 4, mythic: 5, god: 6 };
-    const pool = [...characters].sort(() => Math.random() - 0.5).slice(0, 20);
-    return pool.map(c => {
-        const rv = rarityValues[c.rarity] || 1;
-        return { name: c.name, rarity: c.rarity, cost: rv, atk: rv * 2 };
-    });
-}
-
-// ── presença online ──────────────────────────────────────
-function setupOnlinePresence() {
-    if (!window.firebaseDB || !playerName) return;
-    const playerRef = window.firebaseRef(window.firebaseDB, 'onlinePlayers/' + playerName);
-    window.firebaseSet(playerRef, { name: playerName, timestamp: Date.now() });
-    window.firebaseOnDisconnect(playerRef).remove();
-
-    const onlineRef = window.firebaseRef(window.firebaseDB, 'onlinePlayers');
-    if (onlineListener) onlineListener();
-    onlineListener = window.firebaseOnValue(onlineRef, (snapshot) => {
-        const list = document.getElementById('onlinePlayersList');
-        if (!list) return;
-        list.innerHTML = '';
-        const data = snapshot.val() || {};
-        const players = Object.values(data).filter(p => p.name !== playerName);
-        if (players.length === 0) {
-            list.innerHTML = '<p style="color:#888;text-align:center;padding:20px;">Nenhum jogador online no momento</p>';
-            return;
-        }
-        players.slice(0, 10).forEach(p => {
-            const div = document.createElement('div');
-            div.style.cssText = 'display:flex;justify-content:space-between;align-items:center;background:rgba(255,255,255,0.05);padding:12px 15px;border-radius:8px;border:1px solid #555;transition:all 0.3s;margin-bottom:8px;';
-            div.onmouseover = () => div.style.borderColor = 'gold';
-            div.onmouseout = () => div.style.borderColor = '#555';
-            div.innerHTML = `
-                <span style="color:white;display:flex;align-items:center;gap:8px;">
-                    <span style="width:8px;height:8px;background:#27ae60;border-radius:50%;display:inline-block;box-shadow:0 0 8px #27ae60;"></span>
-                    ${p.name}
-                </span>
-                <button onclick="challengePlayer('${p.name}')" style="background:linear-gradient(45deg,#e74c3c,#c0392b);color:white;border:none;padding:8px 16px;border-radius:6px;cursor:pointer;font-weight:bold;font-size:13px;">⚔️ Batalhar</button>
-            `;
-            list.appendChild(div);
-        });
-    });
-
-    const inviteRef = window.firebaseRef(window.firebaseDB, 'invites/' + playerName);
-    if (inviteListener) inviteListener();
-    inviteListener = window.firebaseOnValue(inviteRef, async (snapshot) => {
-        const invite = snapshot.val();
-        if (invite && invite.roomCode && !currentRoom) {
-            playClick();
-            if (confirm(`⚔️ ${invite.from} te desafiou para uma batalha!\n\nAceitar desafio?`)) {
-                await joinRoomByCode(invite.roomCode);
-            }
-            window.firebaseRemove(inviteRef);
-        }
-    });
-}
-
-function cleanupOnlinePresence() {
-    if (onlineListener) { onlineListener(); onlineListener = null; }
-    if (inviteListener) { inviteListener(); inviteListener = null; }
-    if (window.firebaseDB && playerName) {
-        window.firebaseRemove(window.firebaseRef(window.firebaseDB, 'onlinePlayers/' + playerName));
-    }
-}
-
-// ── desafio / criação de sala ────────────────────────────
-async function challengePlayer(targetName) {
-    if (targetName === playerName) return;
-    playClick();
-    const code = generateRoomCode();
-    currentRoom = code;
-    isHost = true;
-    battleEndHandled = false;
-
-    const roomRef = window.firebaseRef(window.firebaseDB, 'rooms/' + code);
-    await window.firebaseSet(roomRef, {
-        code, status: 'invited', turn: 'host', turnNumber: 1, createdAt: Date.now(),
-        invitedPlayer: targetName,
-        host: { name: playerName, hp: 30, energy: 3, ready: false },
-        guest: { name: targetName, hp: 30, energy: 3, ready: false }
-    });
-    window.firebaseOnDisconnect(roomRef).remove();
-
-    const inviteRef = window.firebaseRef(window.firebaseDB, 'invites/' + targetName);
-    await window.firebaseSet(inviteRef, { from: playerName, roomCode: code, timestamp: Date.now() });
-
-    _showLobby(code, playerName, targetName, 'Convidado...', '#f39c12');
-    listenToRoom(code);
-    addLog(`Desafio enviado para ${targetName}!`, 'turn');
-    setTimeout(() => {
-        const btn = document.getElementById('readyBtn');
-        if (btn) { btn.textContent = 'Aguardando aceite...'; btn.disabled = true; btn.style.opacity = '0.5'; }
-    }, 100);
-}
-
-async function joinRoomByCode(code) {
-    const roomRef = window.firebaseRef(window.firebaseDB, 'rooms/' + code);
-    const snapshot = await window.firebaseGet(roomRef);
-    if (!snapshot.exists()) { alert('Convite expirado!'); return; }
-    currentRoom = code;
-    isHost = false;
-    battleEndHandled = false;
-    const room = snapshot.val();
-    await window.firebaseUpdate(roomRef, {
-        'guest/name': playerName, 'guest/hp': 30, 'guest/energy': 3, 'guest/ready': false,
-        status: 'waiting'
-    });
-    _showLobby(code, room.host.name, playerName, '✓ Conectado', '#27ae60');
-    document.getElementById('player2Slot').classList.add('ready');
-    listenToRoom(code);
-    playClick();
-}
-
-function openMultiplayer() {
-    if (!playerName) { checkPlayerName(); return; }
-    if (!window.firebaseReady) { alert('Firebase não conectado! Verifique sua internet.'); return; }
-    document.getElementById('multiplayerScreen').style.display = 'block';
-    document.getElementById('mpMenu').style.display = 'block';
-    document.getElementById('lobbyScreen').style.display = 'none';
-    document.getElementById('battleScreen').style.display = 'none';
-    document.getElementById('pageGame').style.display = 'none';
-    document.getElementById('gameNav').style.display = 'none';
-    playClick();
-    setupOnlinePresence();
-}
-
-function closeMultiplayer() {
-    if (currentRoom) leaveRoom();
-    document.getElementById('multiplayerScreen').style.display = 'none';
-    const chatBox = document.getElementById('chatBox');
-    chatBox.classList.remove('chat-open');
-    chatBox.style.display = '';
-    const toggleBtn = document.getElementById('chatToggleBtn');
-    toggleBtn.style.display = 'none';
-    document.getElementById('pageGame').style.display = 'block';
-    document.getElementById('gameNav').style.display = 'block';
-    cleanupOnlinePresence();
-}
-
-function generateRoomCode() {
-    return Math.random().toString(36).substring(2, 8).toUpperCase();
-}
-
-async function createRoom() {
-    const code = generateRoomCode();
-    currentRoom = code;
-    isHost = true;
-    battleEndHandled = false;
-    const roomRef = window.firebaseRef(window.firebaseDB, 'rooms/' + code);
-    await window.firebaseSet(roomRef, {
-        code, status: 'waiting', turn: 'host', turnNumber: 1, createdAt: Date.now(),
-        host: { name: playerName, hp: 30, energy: 3, ready: false }, guest: null
-    });
-    window.firebaseOnDisconnect(roomRef).remove();
-    document.getElementById('mpMenu').style.display = 'none';
-    document.getElementById('lobbyScreen').style.display = 'block';
-    document.getElementById('displayRoomCode').textContent = code;
-    document.getElementById('player1Name').textContent = playerName;
-    document.getElementById('player1Status').textContent = 'Aguardando...';
-    document.getElementById('player2Name').textContent = 'Aguardando...';
-    document.getElementById('player2Status').textContent = 'Conectando...';
-    listenToRoom(code);
-    addLog('Sala criada! Código: ' + code, 'turn');
-}
-
-function showJoinRoom() { document.getElementById('joinRoomForm').style.display = 'block'; }
-function hideJoinRoom() { document.getElementById('joinRoomForm').style.display = 'none'; }
-
-async function joinRoom() {
-    const code = document.getElementById('roomCodeInput').value.toUpperCase().trim();
-    if (code.length !== 6) { alert('Código inválido!'); return; }
-    const roomRef = window.firebaseRef(window.firebaseDB, 'rooms/' + code);
-    const snapshot = await window.firebaseGet(roomRef);
-    if (!snapshot.exists()) { alert('Sala não encontrada!'); return; }
-    const room = snapshot.val();
-    if (room.guest && room.guest.name && room.guest.name !== playerName) { alert('Sala cheia!'); return; }
-    currentRoom = code;
-    isHost = false;
-    battleEndHandled = false;
-    await window.firebaseUpdate(roomRef, {
-        guest: { name: playerName, hp: 30, energy: 3, ready: false }, status: 'waiting'
-    });
-    _showLobby(code, room.host.name, playerName, '✓ Conectado', '#27ae60');
-    document.getElementById('player2Slot').classList.add('ready');
-    listenToRoom(code);
-}
-
-function _showLobby(code, host, guest, guestStatus, guestColor) {
-    document.getElementById('mpMenu').style.display = 'none';
-    document.getElementById('lobbyScreen').style.display = 'block';
-    document.getElementById('displayRoomCode').textContent = code;
-    document.getElementById('player1Name').textContent = host;
-    document.getElementById('player2Name').textContent = guest;
-    document.getElementById('player2Status').textContent = guestStatus;
-    document.getElementById('player2Status').style.color = guestColor;
-}
-
-// ── listener principal da sala ───────────────────────────
-function listenToRoom(code) {
-    if (roomListener) { roomListener(); roomListener = null; }
-    const roomRef = window.firebaseRef(window.firebaseDB, 'rooms/' + code);
-    roomListener = window.firebaseOnValue(roomRef, (snapshot) => {
-        if (!snapshot.exists()) {
-            if (currentRoom) _handleDisconnect('A sala foi encerrada pelo oponente.');
-            return;
-        }
-        const room = snapshot.val();
-        battleState = room;
-
-        // ── lobby ──
-        if (room.status === 'waiting' || room.status === 'invited') {
-            if (room.host) {
-                document.getElementById('player1Name').textContent = room.host.name;
-                const p1s = document.getElementById('player1Status');
-                if (room.host.ready) { p1s.textContent = '✓ Pronto'; p1s.style.color = '#27ae60'; document.getElementById('player1Slot').classList.add('ready'); }
-                else { p1s.textContent = 'Aguardando...'; p1s.style.color = '#888'; document.getElementById('player1Slot').classList.remove('ready'); }
-            }
-            if (room.guest && room.guest.name) {
-                document.getElementById('player2Name').textContent = room.guest.name;
-                const p2s = document.getElementById('player2Status');
-                if (room.guest.ready) { p2s.textContent = '✓ Pronto'; p2s.style.color = '#27ae60'; document.getElementById('player2Slot').classList.add('ready'); }
-                else { p2s.textContent = 'Aguardando...'; p2s.style.color = '#888'; document.getElementById('player2Slot').classList.remove('ready'); }
-
-                const readyBtn = document.getElementById('readyBtn');
-                if (readyBtn) {
-                    readyBtn.disabled = false; readyBtn.style.opacity = '1';
-                    const myReady = isHost ? room.host.ready : room.guest.ready;
-                    const otherReady = isHost ? room.guest.ready : room.host.ready;
-                    if (myReady) { readyBtn.textContent = otherReady ? 'INICIANDO...' : 'AGUARDANDO OPONENTE...'; readyBtn.style.background = '#27ae60'; }
-                    else { readyBtn.textContent = 'PRONTO'; readyBtn.style.background = ''; }
-                }
-
-                if (room.host.ready && room.guest.ready && isHost && room.status !== 'battle') {
-                    _playSfxReady();
-                    setTimeout(() => startBattle(), 500);
-                }
-            }
-        }
-
-        // ── batalha ──
-        if (room.status === 'battle') {
-            document.getElementById('lobbyScreen').style.display = 'none';
-            document.getElementById('battleScreen').style.display = 'block';
-            _injectBattleParticles();
-            // Show chat toggle button (not the chat directly)
-            const toggleBtn = document.getElementById('chatToggleBtn');
-            toggleBtn.style.display = 'flex';
-            updateBattleUI(room);
-            _syncBattleLog(room);
-        }
-
-        // ── chat sync ──
-        if (room.chat) _renderChat(room.chat);
-
-        // ── fim ──
-        if (room.status === 'finished' && !battleEndHandled) {
-            battleEndHandled = true;
-            endBattle(room.winner, room.finishReason);
-        }
-
-        // ── desconexão ──
-        if (room.status === 'disconnected' && !battleEndHandled) {
-            battleEndHandled = true;
-            _handleDisconnect(room.disconnectMsg || 'O oponente desconectou.');
-        }
-    });
-}
-
-function _playSfxReady() {
-    try {
-        const ctx = new (window.AudioContext || window.webkitAudioContext)();
-        const osc = ctx.createOscillator(); const gain = ctx.createGain();
-        osc.connect(gain); gain.connect(ctx.destination);
-        osc.frequency.setValueAtTime(800, ctx.currentTime);
-        osc.frequency.exponentialRampToValueAtTime(1200, ctx.currentTime + 0.15);
-        gain.gain.setValueAtTime(0.3, ctx.currentTime);
-        gain.gain.exponentialRampToValueAtTime(0.01, ctx.currentTime + 0.4);
-        osc.start(); osc.stop(ctx.currentTime + 0.4);
-    } catch(e) {}
-}
-
-// ── ready toggle ─────────────────────────────────────────
-async function toggleReady() {
-    if (!currentRoom || !window.firebaseDB) return;
-    playClick();
-    const roomRef = window.firebaseRef(window.firebaseDB, 'rooms/' + currentRoom);
-    const snapshot = await window.firebaseGet(roomRef);
-    const room = snapshot.val();
-    const readyPath = isHost ? 'host/ready' : 'guest/ready';
-    const myReady = isHost ? room.host.ready : room.guest.ready;
-
-    if (!myReady) {
-        // Show deck selection before marking ready
-        const deck = await openDeckSelection();
-        if (!deck) return; // cancelled
-        _pendingDeck = deck;
-        // Save guest deck to Firebase so host can use it when starting
-        const deckPath = isHost ? 'pendingHostDeck' : 'pendingGuestDeck';
-        await window.firebaseUpdate(roomRef, { [deckPath]: deck });
-    }
-    await window.firebaseUpdate(roomRef, { [readyPath]: !myReady });
-}
-
-let _pendingDeck = null;
-
-// ── iniciar batalha (somente host) ───────────────────────
-async function startBattle() {
-    if (!isHost) return;
-    const roomRef = window.firebaseRef(window.firebaseDB, 'rooms/' + currentRoom);
-    const snapshot = await window.firebaseGet(roomRef);
-    const room = snapshot.val();
-
-    const hostDeck = room.pendingHostDeck || _pendingDeck || buildFallbackDeck();
-    const guestDeck = room.pendingGuestDeck || buildGuestDeck();
-    _pendingDeck = null;
-    const maxHp = 30;
-
-    await window.firebaseUpdate(roomRef, {
-        status: 'battle', turn: 'host', turnNumber: 1,
-        'host/hp': maxHp, 'host/energy': 3, 'host/maxHp': maxHp,
-        'guest/hp': maxHp, 'guest/energy': 3, 'guest/maxHp': maxHp,
-        hostDeck: hostDeck,
-        guestDeck: guestDeck,
-        hostHand: hostDeck.slice(0, 5),
-        guestHand: guestDeck.slice(0, 5),
-        hostField: [],
-        guestField: [],
-        battleLog: [{ msg: '⚔️ Batalha iniciada! Boa sorte!', type: 'turn', ts: Date.now() }],
-        chat: []
-    });
-}
-
-function buildFallbackDeck() {
-    const deck = [];
-    while (deck.length < 10) deck.push({ name: 'Golpe Básico', rarity: 'Comum', cost: 1, atk: 2 });
-    return deck;
-}
-
-// ── UI da batalha ─────────────────────────────────────────
-function updateBattleUI(room) {
-    const isMyTurn = (isHost && room.turn === 'host') || (!isHost && room.turn === 'guest');
-    const me = isHost ? room.host : room.guest;
-    const opp = isHost ? room.guest : room.host;
-    const maxHp = me.maxHp || 30;
-
-    document.getElementById('myName').textContent = me.name || playerName;
-    document.getElementById('opponentName').textContent = opp && opp.name ? opp.name : 'Oponente';
-    document.getElementById('myHp').textContent = me.hp != null ? me.hp : 30;
-    document.getElementById('opponentHp').textContent = opp && opp.hp != null ? opp.hp : 30;
-
-    const myPct = ((me.hp != null ? me.hp : 30) / maxHp * 100).toFixed(1);
-    const oppPct = ((opp && opp.hp != null ? opp.hp : 30) / maxHp * 100).toFixed(1);
-    document.getElementById('myHpBar').style.width = myPct + '%';
-    document.getElementById('myHpBar').textContent = me.hp != null ? me.hp : 30;
-    document.getElementById('myHpBar').style.background = myPct > 50 ? 'linear-gradient(90deg,#27ae60,#2ecc71)' : myPct > 25 ? 'linear-gradient(90deg,#e67e22,#f39c12)' : 'linear-gradient(90deg,#c0392b,#e74c3c)';
-    document.getElementById('opponentHpBar').style.width = oppPct + '%';
-    document.getElementById('opponentHpBar').textContent = opp && opp.hp != null ? opp.hp : 30;
-    document.getElementById('opponentHpBar').style.background = oppPct > 50 ? 'linear-gradient(90deg,#27ae60,#2ecc71)' : oppPct > 25 ? 'linear-gradient(90deg,#e67e22,#f39c12)' : 'linear-gradient(90deg,#c0392b,#e74c3c)';
-
-    document.getElementById('turnNumber').textContent = room.turnNumber || 1;
-    document.getElementById('turnIndicator').textContent = isMyTurn ? '⚔️ SEU TURNO' : '⏳ TURNO DO OPONENTE';
-    document.getElementById('turnIndicator').style.color = isMyTurn ? 'gold' : '#888';
-
-    // Minha energia
-    const myEnergyDiv = document.getElementById('myEnergy');
-    myEnergyDiv.innerHTML = '';
-    for (let i = 0; i < 10; i++) {
-        const orb = document.createElement('div');
-        orb.className = 'energy-orb' + (i < (me.energy || 0) ? ' filled' : '');
-        myEnergyDiv.appendChild(orb);
-    }
-    // Energia do oponente
-    const oppEnergyDiv = document.getElementById('opponentEnergy');
-    if (oppEnergyDiv) {
-        oppEnergyDiv.innerHTML = '';
-        for (let i = 0; i < 10; i++) {
-            const orb = document.createElement('div');
-            orb.className = 'energy-orb' + (i < (opp && opp.energy || 0) ? ' filled' : '');
-            oppEnergyDiv.appendChild(orb);
-        }
-    }
-
-    // Minha mão
-    const hand = isHost ? (room.hostHand || []) : (room.guestHand || []);
-    const handDiv = document.getElementById('battleHand');
-    handDiv.innerHTML = '';
-    document.getElementById('handCount').textContent = hand.length;
-    hand.forEach((card, idx) => {
-        const canPlay = isMyTurn && (me.energy || 0) >= card.cost;
-        const cardEl = document.createElement('div');
-        cardEl.className = 'battle-card' + (!canPlay ? ' disabled' : '');
-        cardEl.innerHTML = `
-            <div class="card-cost">${card.cost}</div>
-            <div class="card-atk">⚔️${card.atk}</div>
-            <div class="card-name">${card.name.substring(0, 13)}</div>
-            <div class="card-rarity" style="color:${getRarityColor(card.rarity)}">${card.rarity}</div>
-        `;
-        if (canPlay) cardEl.onclick = () => playCard(idx);
-        handDiv.appendChild(cardEl);
-    });
-
-    // Campo do oponente
-    const oppFieldDiv = document.getElementById('opponentField');
-    if (oppFieldDiv) {
-        oppFieldDiv.innerHTML = '';
-        const oppField = isHost ? (room.guestField || []) : (room.hostField || []);
-        oppField.slice(-3).forEach(c => {
-            const el = document.createElement('div');
-            el.style.cssText = 'background:rgba(231,76,60,0.2);border:1px solid #e74c3c;border-radius:6px;padding:5px 8px;font-size:11px;color:#fff;margin:2px;';
-            el.textContent = c.name + ' (' + c.atk + ')';
-            oppFieldDiv.appendChild(el);
-        });
-    }
-    // Meu campo
-    const myFieldDiv = document.getElementById('myField');
-    if (myFieldDiv) {
-        myFieldDiv.innerHTML = '';
-        const myField = isHost ? (room.hostField || []) : (room.guestField || []);
-        myField.slice(-3).forEach(c => {
-            const el = document.createElement('div');
-            el.style.cssText = 'background:rgba(46,204,113,0.2);border:1px solid #27ae60;border-radius:6px;padding:5px 8px;font-size:11px;color:#fff;margin:2px;';
-            el.textContent = c.name + ' (' + c.atk + ')';
-            myFieldDiv.appendChild(el);
-        });
-    }
-
-    document.getElementById('endTurnBtn').disabled = !isMyTurn;
-    document.getElementById('playerHud').classList.toggle('active', isMyTurn);
-    document.getElementById('opponentHud').classList.toggle('active', !isMyTurn);
-}
-
-let _particlesInjected = false;
-function _injectBattleParticles() {
-    if (_particlesInjected) return;
-    _particlesInjected = true;
-    const screen = document.getElementById('battleScreen');
-    const colors = ['#e74c3c','#3498db','#f39c12','#9b59b6','#27ae60','#00ffff','#fff'];
-    for (let i = 0; i < 18; i++) {
-        const p = document.createElement('div');
-        p.className = 'battle-particle';
-        const size = Math.random() * 6 + 2;
-        const left = Math.random() * 100;
-        const delay = Math.random() * 8;
-        const duration = Math.random() * 8 + 6;
-        const color = colors[Math.floor(Math.random() * colors.length)];
-        p.style.cssText = `width:${size}px;height:${size}px;left:${left}%;bottom:${Math.random()*60}%;background:${color};animation-duration:${duration}s;animation-delay:${delay}s;box-shadow:0 0 ${size*2}px ${color};`;
-        screen.appendChild(p);
-    }
-}
-
-function getRarityColor(rarity) {
-    const colors = {
-        'Comum': '#95a5a6', 'common': '#95a5a6',
-        'Rara': '#3498db', 'rare': '#3498db',
-        'Épica': '#9b59b6', 'epic': '#9b59b6',
-        'Lendária': '#f39c12', 'legendary': '#f39c12',
-        'Mítica': '#e74c3c', 'mythic': '#e74c3c',
-        'God': '#f1c40f', 'god': '#f1c40f'
+    card.ondragstart = event=>{
+        event.dataTransfer.setData(
+            "text/plain",
+            name
+        );
     };
-    return colors[rarity] || '#fff';
+
+    return card;
+
 }
 
-// ── jogar carta ───────────────────────────────────────────
-async function playCard(handIndex) {
-    if (!currentRoom || !battleState) return;
-    const room = battleState;
-    const isMyTurn = (isHost && room.turn === 'host') || (!isHost && room.turn === 'guest');
-    if (!isMyTurn) return;
 
-    const hand = isHost ? [...(room.hostHand || [])] : [...(room.guestHand || [])];
-    if (handIndex >= hand.length) return;
-    const card = hand[handIndex];
-    const me = isHost ? room.host : room.guest;
-    if ((me.energy || 0) < card.cost) return;
+/* =========================
+   RENDERIZAR
+========================= */
 
-    hand.splice(handIndex, 1);
-    const newEnergy = (me.energy || 0) - card.cost;
-    const opp = isHost ? room.guest : room.host;
-    const newOppHp = Math.max(0, (opp.hp || 0) - card.atk);
-    const myField = isHost ? [...(room.hostField || [])] : [...(room.guestField || [])];
-    myField.push({ name: card.name, atk: card.atk });
+function render(){
 
-    const logEntry = { msg: `${me.name || playerName} usou ${card.name} — ${card.atk} de dano!`, type: 'damage', ts: Date.now() };
-    const newLog = [...(room.battleLog || []), logEntry];
+    const search =
+    document
+    .getElementById("search")
+    .value
+    .toLowerCase()
+    .trim();
 
-    const roomRef = window.firebaseRef(window.firebaseDB, 'rooms/' + currentRoom);
-    const updates = { battleLog: newLog, lastAction: { type: 'attack', by: playerName, card: card.name, dmg: card.atk, ts: Date.now() } };
-    if (isHost) {
-        updates['hostHand'] = hand; updates['host/energy'] = newEnergy;
-        updates['guest/hp'] = newOppHp; updates['hostField'] = myField;
-    } else {
-        updates['guestHand'] = hand; updates['guest/energy'] = newEnergy;
-        updates['host/hp'] = newOppHp; updates['guestField'] = myField;
-    }
 
-    playClick();
-    _playAttackSfx();
+    /* POOL */
 
-    if (newOppHp <= 0) {
-        updates['status'] = 'finished';
-        updates['winner'] = playerName;
-        updates['finishReason'] = 'hp';
-    }
-    await window.firebaseUpdate(roomRef, updates);
-}
+    const poolLow =
+    document.getElementById("poolLow");
 
-function _playAttackSfx() {
-    try {
-        const ctx = new (window.AudioContext || window.webkitAudioContext)();
-        const osc = ctx.createOscillator(); const gain = ctx.createGain();
-        osc.type = 'sawtooth';
-        osc.connect(gain); gain.connect(ctx.destination);
-        osc.frequency.setValueAtTime(300, ctx.currentTime);
-        osc.frequency.exponentialRampToValueAtTime(100, ctx.currentTime + 0.2);
-        gain.gain.setValueAtTime(0.2, ctx.currentTime);
-        gain.gain.exponentialRampToValueAtTime(0.001, ctx.currentTime + 0.3);
-        osc.start(); osc.stop(ctx.currentTime + 0.3);
-    } catch(e) {}
-}
+    const poolHigh =
+    document.getElementById("poolHigh");
 
-// ── finalizar turno ───────────────────────────────────────
-async function endTurn() {
-    if (!currentRoom || !battleState) return;
-    const room = battleState;
-    const isMyTurn = (isHost && room.turn === 'host') || (!isHost && room.turn === 'guest');
-    if (!isMyTurn) return;
+    poolLow.innerHTML = "";
+    poolHigh.innerHTML = "";
 
-    const nextTurn = room.turn === 'host' ? 'guest' : 'host';
-    const nextPlayer = nextTurn === 'host' ? room.host : room.guest;
-    const newEnergy = Math.min(10, (nextPlayer.energy || 0) + 2);
-    const newTurnNum = (room.turnNumber || 1) + (nextTurn === 'host' ? 1 : 0);
 
-    const deck = nextTurn === 'host' ? [...(room.hostDeck || [])] : [...(room.guestDeck || [])];
-    const currentHand = nextTurn === 'host' ? [...(room.hostHand || [])] : [...(room.guestHand || [])];
-    let newHand = currentHand;
-    if (deck.length > 0 && currentHand.length < 7) {
-        const drawnCard = deck.shift();
-        newHand = [...currentHand, drawnCard];
-    }
+    brawlers
+    .filter(name =>
+        data[name] === null &&
+        name.toLowerCase().includes(search)
+    )
+    .forEach(name=>{
 
-    const logEntry = { msg: `Turno ${newTurnNum} — vez de ${nextPlayer.name || (nextTurn === 'host' ? room.host.name : room.guest.name)}`, type: 'turn', ts: Date.now() };
-    const newLog = [...(room.battleLog || []), logEntry];
+        poolLow.appendChild(
+            createCard(name)
+        );
 
-    const roomRef = window.firebaseRef(window.firebaseDB, 'rooms/' + currentRoom);
-    const updates = { turn: nextTurn, turnNumber: newTurnNum, battleLog: newLog };
-    if (nextTurn === 'host') {
-        updates['host/energy'] = newEnergy; updates['hostHand'] = newHand; updates['hostDeck'] = deck;
-    } else {
-        updates['guest/energy'] = newEnergy; updates['guestHand'] = newHand; updates['guestDeck'] = deck;
-    }
-    playClick();
-    await window.firebaseUpdate(roomRef, updates);
-}
+        poolHigh.appendChild(
+            createCard(name)
+        );
 
-// ── log de batalha sincronizado ───────────────────────────
-let _lastLogLength = 0;
-function _syncBattleLog(room) {
-    const log = document.getElementById('battleLog');
-    if (!log || !room.battleLog) return;
-    const entries = Array.isArray(room.battleLog) ? room.battleLog : Object.values(room.battleLog);
-    if (entries.length === _lastLogLength) return;
-    _lastLogLength = entries.length;
-    log.innerHTML = '';
-    entries.forEach(e => {
-        const div = document.createElement('div');
-        div.className = 'log-entry ' + (e.type || '');
-        const time = new Date(e.ts || Date.now()).toLocaleTimeString().substring(0, 5);
-        div.textContent = `[${time}] ${e.msg}`;
-        log.appendChild(div);
     });
-    log.scrollTop = log.scrollHeight;
+
+
+    /* GRADES */
+
+    createGrid(
+        "gridLow",
+        lowTrophies
+    );
+
+    createGrid(
+        "gridHigh",
+        highTrophies
+    );
+
+
+    updateStatus();
+
 }
 
-function addLog(message, type) {
-    const log = document.getElementById('battleLog');
-    if (!log) return;
-    const entry = document.createElement('div');
-    entry.className = 'log-entry ' + (type || '');
-    entry.textContent = `[${new Date().toLocaleTimeString().substring(0,5)}] ${message}`;
-    log.appendChild(entry);
-    log.scrollTop = log.scrollHeight;
-}
 
-// ── chat toggle ───────────────────────────────────────────
-let chatUnreadCount = 0;
-function toggleChat() {
-    const chatBox = document.getElementById('chatBox');
-    const isOpen = chatBox.classList.contains('chat-open');
-    if (isOpen) {
-        chatBox.classList.remove('chat-open');
-    } else {
-        chatBox.classList.add('chat-open');
-        chatUnreadCount = 0;
-        const badge = document.getElementById('chatUnreadBadge');
-        badge.style.display = 'none';
-        // scroll to bottom
-        const msgs = document.getElementById('chatMessages');
-        if (msgs) msgs.scrollTop = msgs.scrollHeight;
-    }
-}
+/* =========================
+   CRIAR GRADE
+========================= */
 
-// ── chat sincronizado ─────────────────────────────────────
-let _lastChatLength = 0;
-async function sendChat() {
-    const input = document.getElementById('chatInput');
-    const msg = input.value.trim();
-    if (!msg || !currentRoom) return;
-    input.value = '';
-    const roomRef = window.firebaseRef(window.firebaseDB, 'rooms/' + currentRoom);
-    const snapshot = await window.firebaseGet(roomRef);
-    const room = snapshot.val();
-    const chat = [...(room.chat || []), { from: playerName, msg, ts: Date.now() }];
-    await window.firebaseUpdate(roomRef, { chat });
-}
+function createGrid(id,trophies){
 
-function _renderChat(chatArr) {
-    const chat = document.getElementById('chatMessages');
-    if (!chat) return;
-    const entries = Array.isArray(chatArr) ? chatArr : Object.values(chatArr);
-    if (entries.length === _lastChatLength) return;
-    const newMsgs = entries.length - _lastChatLength;
-    _lastChatLength = entries.length;
-    chat.innerHTML = '';
-    entries.forEach(e => {
-        const div = document.createElement('div');
-        div.style.color = e.from === playerName ? 'gold' : '#aef';
-        div.style.marginBottom = '3px';
-        div.textContent = `${e.from}: ${e.msg}`;
-        chat.appendChild(div);
-    });
-    chat.scrollTop = chat.scrollHeight;
+    const grid =
+    document.getElementById(id);
 
-    // Show unread badge if chat is closed
-    const chatBox = document.getElementById('chatBox');
-    if (!chatBox.classList.contains('chat-open') && newMsgs > 0) {
-        chatUnreadCount += newMsgs;
-        const badge = document.getElementById('chatUnreadBadge');
-        badge.textContent = chatUnreadCount > 9 ? '9+' : chatUnreadCount;
-        badge.style.display = 'flex';
-    }
-}
+    grid.innerHTML = "";
 
-// ── sair da sala ──────────────────────────────────────────
-async function leaveRoom() {
-    if (roomListener) { roomListener(); roomListener = null; }
-    if (currentRoom && window.firebaseDB) {
-        try {
-            const roomRef = window.firebaseRef(window.firebaseDB, 'rooms/' + currentRoom);
-            const snapshot = await window.firebaseGet(roomRef);
-            if (snapshot.exists()) {
-                const room = snapshot.val();
-                if (room.status === 'battle') {
-                    await window.firebaseUpdate(roomRef, {
-                        status: 'disconnected',
-                        disconnectMsg: `${playerName} abandonou a batalha.`
-                    });
-                    await new Promise(r => setTimeout(r, 400));
-                }
-                await window.firebaseRemove(roomRef);
-            }
-        } catch(e) {}
-    }
-    currentRoom = null;
-    battleEndHandled = false;
-    _lastLogLength = 0;
-    _lastChatLength = 0;
-    _particlesInjected = false;
-    const res = document.getElementById('battleResultScreen');
-    if (res) res.remove();
-    closeMultiplayer();
-}
 
-function surrender() {
-    if (confirm('Desistir da batalha?')) leaveRoom();
-}
+    trophies.forEach(trophy=>{
 
-function quickMatch() {
-    playClick();
-    const list = document.getElementById('onlinePlayersList');
-    if (list) {
-        list.scrollIntoView({ behavior: 'smooth' });
-        document.getElementById('onlineSection').style.borderColor = 'gold';
-        setTimeout(() => document.getElementById('onlineSection').style.borderColor = '#444', 2000);
-    }
-    alert('⚡ Selecione um jogador online abaixo e clique em BATALHAR!');
-}
+        const bucket =
+        document.createElement("div");
 
-// ── tela de fim de batalha ────────────────────────────────
-function endBattle(winner, reason) {
-    const isVictory = winner === playerName;
-    _showBattleResult(isVictory, winner, reason);
-    setTimeout(() => { if (currentRoom) leaveRoom(); }, 5000);
-}
+        bucket.className =
+        "bucket";
 
-function _handleDisconnect(msg) {
-    _showBattleResult(false, null, 'disconnect', msg);
-    setTimeout(() => { if (currentRoom) leaveRoom(); }, 4000);
-}
 
-function _showBattleResult(isVictory, winner, reason, customMsg) {
-    let existing = document.getElementById('battleResultScreen');
-    if (existing) existing.remove();
+        bucket.innerHTML = `
 
-    const overlay = document.createElement('div');
-    overlay.id = 'battleResultScreen';
-    overlay.style.cssText = 'position:fixed;top:0;left:0;width:100%;height:100%;background:rgba(0,0,0,0.88);z-index:9000;display:flex;flex-direction:column;justify-content:center;align-items:center;animation:brFadeIn 0.5s ease;';
+        <div class="bucketHeader">
 
-    let icon, title, subtitle, color;
-    if (reason === 'disconnect') {
-        icon = '🔌'; title = 'DESCONEXÃO'; subtitle = customMsg || 'O oponente desconectou.'; color = '#e67e22';
-    } else if (isVictory) {
-        icon = '🏆'; title = 'VITÓRIA!'; subtitle = 'Você derrotou seu oponente!'; color = 'gold';
-    } else {
-        icon = '💀'; title = 'DERROTA'; subtitle = `${winner || 'Oponente'} venceu a batalha!`; color = '#e74c3c';
-    }
+            <span class="trophy">
+                🏆 ${trophy}
+            </span>
 
-    overlay.innerHTML = `
-        <style>@keyframes brFadeIn{from{opacity:0;transform:scale(0.8);}to{opacity:1;transform:scale(1);}}</style>
-        <div style="text-align:center;padding:40px;background:rgba(0,0,0,0.95);border-radius:20px;border:3px solid ${color};box-shadow:0 0 60px ${color}44;max-width:380px;width:90%;">
-            <div style="font-size:80px;line-height:1;margin-bottom:10px;">${icon}</div>
-            <h1 style="color:${color};font-size:48px;margin:10px 0;text-shadow:0 0 20px ${color};">${title}</h1>
-            <p style="color:#ccc;font-size:18px;margin:10px 0 25px;">${subtitle}</p>
-            <div style="color:#888;font-size:13px;margin-bottom:20px;">Voltando ao lobby em 5 segundos...</div>
-            <button onclick="battleEndHandled=true;if(currentRoom)leaveRoom();else closeMultiplayer();" style="background:${color};color:#000;border:none;padding:12px 30px;border-radius:8px;font-size:18px;font-weight:bold;cursor:pointer;">Voltar ao Lobby</button>
+            <span class="count">
+                0
+            </span>
+
         </div>
-    `;
-    document.body.appendChild(overlay);
 
-    try {
-        const ctx = new (window.AudioContext || window.webkitAudioContext)();
-        const freqs = isVictory ? [523,659,784,1047] : [400,300,200,150];
-        freqs.forEach((f, i) => {
-            const osc = ctx.createOscillator(); const gain = ctx.createGain();
-            osc.connect(gain); gain.connect(ctx.destination);
-            osc.frequency.value = f; osc.type = isVictory ? 'sine' : 'sawtooth';
-            gain.gain.setValueAtTime(0.2, ctx.currentTime + i * 0.15);
-            gain.gain.exponentialRampToValueAtTime(0.001, ctx.currentTime + i * 0.15 + 0.3);
-            osc.start(ctx.currentTime + i * 0.15);
-            osc.stop(ctx.currentTime + i * 0.15 + 0.3);
+        <div class="drop"></div>
+
+        `;
+
+
+        const drop =
+        bucket.querySelector(".drop");
+
+
+        /* DRAG */
+
+        bucket.ondragover =
+        event=>{
+
+            event.preventDefault();
+
+            bucket.classList.add(
+                "over"
+            );
+
+        };
+
+
+        bucket.ondragleave =
+        ()=>{
+            bucket.classList.remove(
+                "over"
+            );
+        };
+
+
+        bucket.ondrop =
+        event=>{
+
+            event.preventDefault();
+
+            bucket.classList.remove(
+                "over"
+            );
+
+            const name =
+            event.dataTransfer
+            .getData("text/plain");
+
+            if(name){
+
+                assign(
+                    name,
+                    trophy
+                );
+
+            }
+
+        };
+
+
+        /* BRAWLERS NESSA FAIXA */
+
+        const search =
+        document
+        .getElementById("search")
+        .value
+        .toLowerCase();
+
+
+        const names =
+        brawlers.filter(name=>
+            data[name] === trophy &&
+            name.toLowerCase()
+            .includes(search)
+        );
+
+
+        names.forEach(name=>{
+
+            drop.appendChild(
+                createCard(name)
+            );
+
         });
-    } catch(e) {}
+
+
+        bucket.querySelector(
+            ".count"
+        ).textContent =
+        brawlers.filter(
+            name=>data[name] === trophy
+        ).length;
+
+
+        if(names.length === 0){
+
+            drop.innerHTML =
+            `<div class="empty">
+                Arraste aqui
+            </div>`;
+
+        }
+
+
+        grid.appendChild(bucket);
+
+    });
+
 }
+
+
+/* =========================
+   ATRIBUIR TROFÉUS
+========================= */
+
+function assign(name,trophy){
+
+    data[name] = trophy;
+
+    save();
+
+    render();
+
+    showToast(
+        `${name} → ${trophy} troféus`
+    );
+
+}
+
+
+/* =========================
+   MODAL
+========================= */
+
+function openModal(name){
+
+    selectedBrawler = name;
+
+    document.getElementById(
+        "modalName"
+    ).textContent = name;
+
+
+    const choices =
+    document.getElementById(
+        "choices"
+    );
+
+    choices.innerHTML = "";
+
+
+    const all =
+    [...new Set([
+        ...lowTrophies,
+        ...highTrophies
+    ])];
+
+
+    all.forEach(trophy=>{
+
+        const button =
+        document.createElement("button");
+
+        button.className =
+        "choice";
+
+        button.textContent =
+        `🏆 ${trophy}`;
+
+
+        button.onclick = ()=>{
+
+            assign(
+                selectedBrawler,
+                trophy
+            );
+
+            closeModal();
+
+        };
+
+
+        choices.appendChild(
+            button
+        );
+
+    });
+
+
+    const remove =
+    document.createElement("button");
+
+    remove.className =
+    "choice";
+
+    remove.textContent =
+    "❌ Não classificado";
+
+
+    remove.onclick = ()=>{
+
+        data[selectedBrawler] =
+        null;
+
+        save();
+
+        render();
+
+        closeModal();
+
+    };
+
+
+    choices.appendChild(
+        remove
+    );
+
+
+    document
+    .getElementById("modal")
+    .classList.add("show");
+
+}
+
+
+function closeModal(){
+
+    document
+    .getElementById("modal")
+    .classList.remove("show");
+
+    selectedBrawler = null;
+
+}
+
+
+/* =========================
+   TROCAR PÁGINA
+========================= */
+
+function changePage(page,button){
+
+    document
+    .querySelectorAll(".page")
+    .forEach(p=>{
+        p.classList.remove("active");
+    });
+
+
+    document
+    .getElementById(page)
+    .classList.add("active");
+
+
+    document
+    .querySelectorAll(".tab")
+    .forEach(t=>{
+        t.classList.remove("active");
+    });
+
+
+    button.classList.add("active");
+
+}
+
+
+/* =========================
+   BUSCA
+========================= */
+
+function clearSearch(){
+
+    document
+    .getElementById("search")
+    .value = "";
+
+    render();
+
+}
+
+
+/* =========================
+   RESET
+========================= */
+
+function resetAll(){
+
+    if(!confirm(
+        "Tem certeza que quer apagar toda a classificação?"
+    )){
+        return;
+    }
+
+
+    brawlers.forEach(name=>{
+        data[name] = null;
+    });
+
+
+    save();
+
+    render();
+
+    showToast(
+        "Tudo foi zerado"
+    );
+
+}
+
+
+/* =========================
+   TOAST
+========================= */
+
+function showToast(text){
+
+    const toast =
+    document.getElementById(
+        "toast"
+    );
+
+    toast.textContent = text;
+
+    toast.classList.add("show");
+
+
+    setTimeout(()=>{
+        toast.classList.remove(
+            "show"
+        );
+    },1400);
+
+}
+
+
+/* =========================
+   FECHAR MODAL
+========================= */
+
+document
+.getElementById("modal"
+.addEventListener("click",event=>{
+
+    if(
+        event.target.id === "modal"
+    )q{
+        closeModal();
+    }
+
+});
+
+
+/* =========================
+   INICIAR
+========================= */
+
+render();
 
 </script>
+
 </body>
-</html>
+  </html>
